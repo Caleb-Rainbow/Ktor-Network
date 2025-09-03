@@ -1,8 +1,8 @@
 package com.util.ktor
 
 import android.util.Log
+import com.util.ktor.config.LoginKeyStyle
 import com.util.ktor.config.NetworkConfig
-import com.util.ktor.model.LoginModel
 import com.util.ktor.model.ResultCodeType
 import com.util.ktor.model.ResultModel
 import com.util.ktor.model.UserToken
@@ -34,6 +34,8 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import java.io.File
 
@@ -125,6 +127,7 @@ class HttpUtil(
             Log.d(method.value, "path: $path  response: $response")
             val result = json.decodeFromString(serializer, response)
             if (result.code == ResultCodeType.NO_LOGIN.code && path != config.loginPath) {
+                val loginPayload = createLoginModel(config)
                 val r = httpClient.post {
                     url {
                         this.protocol = if (localHost.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
@@ -133,9 +136,7 @@ class HttpUtil(
                             this.port = it
                         }
                         path(config.loginPath)
-                        setBody(
-                            json.encodeToString(LoginModel(config.username, config.password))
-                        )
+                        setBody(loginPayload)
                     }
                     contentType(ContentType.Application.Json)
                 }.bodyAsText()
@@ -319,6 +320,23 @@ class HttpUtil(
             }.bodyAsText()
             Log.d("POST", "path: ${config.uploadFilePath}  response: $result")
             json.decodeFromString(result)
+        }
+    }
+}
+
+fun createLoginModel(configProvider: NetworkConfig)= buildJsonObject {
+    val style = configProvider.getLoginKeyStyle()
+    val username = configProvider.username
+    val password = configProvider.password
+
+    when (style) {
+        LoginKeyStyle.CAMEL_CASE_V1 -> {
+            put("userName", username)
+            put("passWord", password)
+        }
+        LoginKeyStyle.LOWER_CASE_V2 -> {
+            put("username", username)
+            put("password", password)
         }
     }
 }

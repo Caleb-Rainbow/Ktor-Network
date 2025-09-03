@@ -17,4 +17,10 @@ interface NetworkConfig {
 
     // 当 Token 更新时，库需要一种方式来通知 App 保存新 Token
     fun onNewTokenReceived(token: String, tenant: String?)
+
+    /**
+     * 获取当前应用所需的登录字段名风格。
+     * @return LoginKeyStyle 枚举，默认为 V1 风格
+     */
+    fun getLoginKeyStyle(): LoginKeyStyle = LoginKeyStyle.CAMEL_CASE_V1
 }
