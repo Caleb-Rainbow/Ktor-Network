@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "NetworkModule"
 include(":app")
- 
+include(":ktor")

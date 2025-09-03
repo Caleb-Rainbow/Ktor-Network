@@ -1,4 +1,4 @@
-package com.util.network.model
+package com.util.ktor.model
 
 
 import kotlinx.serialization.SerialName

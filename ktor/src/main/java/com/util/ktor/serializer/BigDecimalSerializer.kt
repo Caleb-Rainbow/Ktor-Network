@@ -1,4 +1,4 @@
-package com.util.network.serializer
+package com.util.ktor.serializer
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.descriptors.PrimitiveKind

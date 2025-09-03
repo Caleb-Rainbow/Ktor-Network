@@ -1,4 +1,4 @@
-package com.util.network.config
+package com.util.ktor.config
 
 /**
  * @description
@@ -14,7 +14,6 @@ interface NetworkConfig {
     val password: String
     val loginPath: String
     val uploadFilePath: String
-    val bucketName: String
 
     // 当 Token 更新时，库需要一种方式来通知 App 保存新 Token
     fun onNewTokenReceived(token: String, tenant: String?)

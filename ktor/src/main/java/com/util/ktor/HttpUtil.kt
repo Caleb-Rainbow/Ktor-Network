@@ -1,11 +1,11 @@
-package com.util.network
+package com.util.ktor
 
 import android.util.Log
-import com.util.network.config.NetworkConfig
-import com.util.network.model.LoginModel
-import com.util.network.model.ResultCodeType
-import com.util.network.model.ResultModel
-import com.util.network.model.UserToken
+import com.util.ktor.config.NetworkConfig
+import com.util.ktor.model.LoginModel
+import com.util.ktor.model.ResultCodeType
+import com.util.ktor.model.ResultModel
+import com.util.ktor.model.UserToken
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.network.sockets.ConnectTimeoutException
