@@ -1,3 +1,5 @@
+
+
 plugins {
     id("maven-publish")
     id("com.android.library")
@@ -28,12 +30,27 @@ android {
 
     sourceSets["main"].java.srcDirs("src/main/java")
     publishing {
+
         singleVariant("release") {
             withSourcesJar()
-            withJavadocJar()
         }
     }
 }
+
+publishing {
+    publications {
+        create<MavenPublication>("release") {
+            groupId = "com.github.Caleb-Rainbow"
+            artifactId = "Ktor-Network"
+            version = "V1.0.0-alpha7"
+
+            afterEvaluate {
+                from(components["release"])
+            }
+        }
+    }
+}
+
 
 dependencies {
     //serialization

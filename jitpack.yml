@@ -1,4 +1,0 @@
-jdk:
-  - openjdk17
-install:
-  - ./gradlew :ktor:publishReleasePublicationToMavenLocal -Pgroup=com.github.Caleb-Rainbow -Pversion=$JITPACK_VERSION
