@@ -4,6 +4,7 @@ plugins {
     id("maven-publish")
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -42,7 +43,7 @@ publishing {
         create<MavenPublication>("release") {
             groupId = "com.github.Caleb-Rainbow"
             artifactId = "Ktor-Network"
-            version = "1.0.0-alpha3"
+            version = "1.0.0-alpha4"
 
             afterEvaluate {
                 from(components["release"])
