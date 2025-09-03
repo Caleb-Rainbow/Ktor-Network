@@ -35,7 +35,7 @@ dependencies {
     implementation(libs.ktor.client.cio)
 }
 
-/*
+
 afterEvaluate {
     publishing {
         publications {
@@ -46,8 +46,8 @@ afterEvaluate {
                 // groupId, artifactId, 和 version 构成了库的唯一坐标
                 groupId = "com.github.Caleb-Rainbow" // 替换为你的 GitHub 用户名
                 artifactId = "Ktor-Network"          // 这个库的名称
-                version = "V1.0.0-alpha3"             // 和你的 Tag 保持一致
+                version = "V1.0.0-alpha4"             // 和你的 Tag 保持一致
             }
         }
     }
-}*/
+}
