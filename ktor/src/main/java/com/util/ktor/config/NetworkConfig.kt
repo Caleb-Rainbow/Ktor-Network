@@ -14,6 +14,8 @@ interface NetworkConfig {
     val password: String
     val loginPath: String
     val uploadFilePath: String
+    val checkUpdatePath: String
+    val heartBeatPath: String
 
     // 当 Token 更新时，库需要一种方式来通知 App 保存新 Token
     fun onNewTokenReceived(token: String, tenant: String?)
