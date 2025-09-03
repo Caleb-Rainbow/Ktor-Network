@@ -25,6 +25,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
+
+    sourceSets["main"].java.srcDirs("src/main/java")
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 
 dependencies {
@@ -33,21 +41,4 @@ dependencies {
     //ktor
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
-}
-
-
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("release") {
-                // from(components["release"]) 告诉插件我们要发布 release 构建变体
-                from(components["release"])
-
-                // groupId, artifactId, 和 version 构成了库的唯一坐标
-                groupId = "com.github.Caleb-Rainbow" // 替换为你的 GitHub 用户名
-                artifactId = "Ktor-Network"          // 这个库的名称
-                version = "V1.0.0-alpha4"             // 和你的 Tag 保持一致
-            }
-        }
-    }
 }
