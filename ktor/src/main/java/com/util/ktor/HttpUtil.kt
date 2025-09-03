@@ -11,23 +11,28 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.URLProtocol
+import io.ktor.http.contentLength
 import io.ktor.http.contentType
 import io.ktor.http.path
+import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
@@ -47,7 +52,7 @@ import java.io.File
 class HttpUtil(
     val httpClient: HttpClient,
     val json: Json,
-    val config: NetworkConfig
+    val config: NetworkConfig,
 ) {
     suspend fun <T> makeRequest(
         serializer: KSerializer<ResultModel<T>>,
@@ -56,7 +61,7 @@ class HttpUtil(
         body: Any? = null,
         contentType: ContentType = ContentType.Application.Json,
         headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap()
+        parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
         try {
             val localHost = config.serverAddress
@@ -127,7 +132,7 @@ class HttpUtil(
             Log.d(method.value, "path: $path  response: $response")
             val result = json.decodeFromString(serializer, response)
             if (result.code == ResultCodeType.NO_LOGIN.code && path != config.loginPath) {
-                val loginPayload = createLoginModel(config)
+                val loginPayload = createLoginModel(config.getLoginKeyStyle(), config.username, config.password)
                 val r = httpClient.post {
                     url {
                         this.protocol = if (localHost.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
@@ -144,7 +149,7 @@ class HttpUtil(
                 val loginResult = json.decodeFromString<ResultModel<UserToken>>(r)
                 if (loginResult.isSuccess()) {
                     loginResult.token?.let {
-                        config.onNewTokenReceived(it.token,it.tenant)
+                        config.onNewTokenReceived(it.token, it.tenant)
                     }
                     return makeRequest(serializer, method, path, body, contentType, headersMap, parametersMap)
                 } else {
@@ -169,7 +174,7 @@ class HttpUtil(
         path: String,
         headersMap: Map<String, String>,
         parametersMap: Map<String, String>,
-        body: Any? = null
+        body: Any? = null,
     ) {
         // 设置请求头
         headersMap.forEach {
@@ -229,7 +234,7 @@ class HttpUtil(
         path: String,
         body: Any? = null,
         headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap()
+        parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
         return withContext(Dispatchers.IO) {
             makeRequest(
@@ -247,7 +252,7 @@ class HttpUtil(
     suspend inline fun <reified T> get(
         path: String,
         headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap()
+        parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
         return withContext(Dispatchers.IO) {
             makeRequest(
@@ -264,7 +269,7 @@ class HttpUtil(
     suspend inline fun <reified T> delete(
         path: String,
         headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap()
+        parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
         return withContext(Dispatchers.IO) {
             makeRequest(
@@ -282,7 +287,7 @@ class HttpUtil(
         path: String,
         body: String = "",
         headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap()
+        parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
         return withContext(Dispatchers.IO) {
             makeRequest(
@@ -297,7 +302,7 @@ class HttpUtil(
     }
 
 
-    suspend fun uploadFile(file: File,config: NetworkConfig): ResultModel<JsonObject> {
+    suspend fun uploadFile(file: File, config: NetworkConfig): ResultModel<JsonObject> {
         return withContext(Dispatchers.IO) {
             val url = kotlin.text.StringBuilder().append(config.serverAddress)
             if (config.serverPort.isNotEmpty()) url.append(":").append(config.serverPort)
@@ -322,18 +327,93 @@ class HttpUtil(
             json.decodeFromString(result)
         }
     }
+
+    /**
+     * 下载文件实现
+     * @param path 文件的 URL。
+     * @param filePath 文件保存的本地路径。
+     * @param onProgress 进度回调，返回当前进度、速度和剩余时间。
+     * @return ResultModel<String> 包含下载成功后的文件路径或错误信息。
+     */
+    suspend fun downloadFile(
+        path: String,
+        filePath: String,
+        onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit
+    ): ResultModel<String> {
+        return withContext(Dispatchers.IO) {
+            val file = File(filePath)
+            // 确保文件所在目录存在
+            file.parentFile?.mkdirs()
+            val outputStream = file.outputStream()
+            try {
+                httpClient.prepareGet(path) { // 使用 httpUtil.httpClient 来执行网络请求
+                    timeout {
+                        requestTimeoutMillis = 1200000
+                    }
+                }.execute { httpResponse ->
+                    val totalBytes = httpResponse.contentLength() ?: 0L // 获取文件总大小
+                    var bytesRead = 0L // 已读取的字节数
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE) // 缓冲区
+                    val channel = httpResponse.bodyAsChannel() // 获取响应的字节通道
+
+                    val startTime = System.currentTimeMillis() // 开始下载时间
+                    var lastUpdateTime = startTime // 上次更新时间
+
+                    while (!channel.isClosedForRead) {
+                        val read = channel.readAvailable(buffer) // 从通道读取字节到缓冲区
+                        if (read == -1) break // 读取结束
+                        outputStream.write(buffer, 0, read) // 将缓冲区内容写入文件
+                        bytesRead += read // 更新已读取字节数
+
+                        val currentTime = System.currentTimeMillis() // 当前时间
+                        // 每 500 毫秒更新一次进度，或者在下载完成时立即更新
+                        if (currentTime - lastUpdateTime >= 500 || bytesRead == totalBytes || bytesRead == totalBytes - 1) {
+                            val progress = if (totalBytes > 0) bytesRead.toFloat() / totalBytes else 0f
+                            val elapsedTime = (currentTime - startTime).toFloat() / 1000 // 已用时间 (秒)
+                            val speed = if (elapsedTime > 0) (bytesRead / elapsedTime / (1024 * 1024)).format(2) else "0.00" // 速度 (MB/s)
+
+                            // 估算剩余时间
+                            val remainingTimeSeconds = if (bytesRead > 0) (elapsedTime / bytesRead) * (totalBytes - bytesRead) else 0f
+                            val remainingTimeFormatted = formatTime(remainingTimeSeconds.toLong())
+
+                            onProgress(progress, "$speed MB/s", remainingTimeFormatted)
+                            lastUpdateTime = currentTime
+                        }
+                    }
+                }
+                outputStream.close() // 关闭输出流
+                ResultModel.Companion.success(filePath) // 下载成功，返回文件路径
+            } catch (e: Exception) {
+                // 下载过程中发生异常，返回失败结果
+                ResultModel.error(e.localizedMessage ?: "下载失败")
+            }
+        }
+    }
+
+    /**
+     * 格式化浮点数为指定位数的小数
+     */
+    private fun Float.format(digits: Int) = "%.${digits}f".format(this)
+
+    /**
+     * 格式化秒数为易读的时间字符串（例如 "2分10秒"）
+     */
+    private fun formatTime(totalSeconds: Long): String {
+        if (totalSeconds <= 0) return "0秒"
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return if (minutes > 0) "${minutes}分${seconds}秒" else "${seconds}秒"
+    }
+
 }
 
-fun createLoginModel(configProvider: NetworkConfig)= buildJsonObject {
-    val style = configProvider.getLoginKeyStyle()
-    val username = configProvider.username
-    val password = configProvider.password
-
+fun createLoginModel(style: LoginKeyStyle, username: String, password: String) = buildJsonObject {
     when (style) {
         LoginKeyStyle.CAMEL_CASE_V1 -> {
             put("userName", username)
             put("passWord", password)
         }
+
         LoginKeyStyle.LOWER_CASE_V2 -> {
             put("username", username)
             put("password", password)
