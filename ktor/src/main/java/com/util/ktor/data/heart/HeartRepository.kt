@@ -1,7 +1,7 @@
 package com.util.ktor.data.heart
 
 import com.util.ktor.HttpUtil
-import com.util.ktor.config.NetworkConfig
+import com.util.ktor.config.NetworkConfigProvider
 import com.util.ktor.model.ResultModel
 
 /**
@@ -11,7 +11,7 @@ import com.util.ktor.model.ResultModel
  **/
 class HeartRepository(
     private val httpUtil: HttpUtil,
-    private val config: NetworkConfig
+    private val config: NetworkConfigProvider
 ) {
     suspend fun heartbeat(deviceNumber: String, second: Int): ResultModel<String> =
         httpUtil.get(path = config.heartBeatPath + "/" + deviceNumber + "/" + second)

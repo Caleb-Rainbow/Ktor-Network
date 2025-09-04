@@ -2,28 +2,41 @@ package com.util.ktor
 
 import android.util.Log
 import com.util.ktor.config.LoginKeyStyle
-import com.util.ktor.config.NetworkConfig
+import com.util.ktor.config.NetworkConfigProvider
+import com.util.ktor.model.CustomResultCode
 import com.util.ktor.model.ResultCodeType
 import com.util.ktor.model.ResultModel
 import com.util.ktor.model.UserToken
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.ResponseException
+import io.ktor.client.plugins.auth.Auth
+import io.ktor.client.plugins.auth.providers.BearerTokens
+import io.ktor.client.plugins.auth.providers.bearer
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.logging.ANDROID
+import io.ktor.client.plugins.logging.LogLevel
+import io.ktor.client.plugins.logging.Logger
+import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
-import io.ktor.client.request.delete
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
-import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
-import io.ktor.client.request.put
+import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
@@ -31,7 +44,11 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.URLProtocol
 import io.ktor.http.contentLength
 import io.ktor.http.contentType
+import io.ktor.http.encodedPath
+import io.ktor.http.isSuccess
 import io.ktor.http.path
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.util.network.UnresolvedAddressException
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,180 +69,84 @@ import java.io.File
 class HttpUtil(
     val httpClient: HttpClient,
     val json: Json,
-    val config: NetworkConfig,
+    val config: NetworkConfigProvider,
 ) {
-    suspend fun <T> makeRequest(
+    /**
+     * 通用的请求执行器，包含自动重登录逻辑
+     */
+    suspend fun <T> executeRequest(
         serializer: KSerializer<ResultModel<T>>,
-        method: HttpMethod,
-        path: String,
-        body: Any? = null,
-        contentType: ContentType = ContentType.Application.Json,
-        headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap(),
+        block: HttpRequestBuilder.() -> Unit,
     ): ResultModel<T> {
         try {
-            val localHost = config.serverAddress
-            val localPort = config.serverPort.toIntOrNull()
-            val token = config.token
-            val tenant = config.tenant
-            val response = when (method) {
-                HttpMethod.Post -> httpClient.post {
-                    setupRequest(
-                        token,
-                        localHost,
-                        localPort,
-                        tenant,
-                        contentType,
-                        this,
-                        path,
-                        headersMap,
-                        parametersMap,
-                        body
-                    )
-                }.bodyAsText()
-
-                HttpMethod.Get -> httpClient.get {
-                    setupRequest(
-                        token,
-                        localHost,
-                        localPort,
-                        tenant,
-                        contentType,
-                        this,
-                        path,
-                        headersMap,
-                        parametersMap
-                    )
-                }.bodyAsText()
-
-                HttpMethod.Delete -> httpClient.delete {
-                    setupRequest(
-                        token,
-                        localHost,
-                        localPort,
-                        tenant,
-                        contentType,
-                        this,
-                        path,
-                        headersMap,
-                        parametersMap
-                    )
-                }.bodyAsText()
-
-                HttpMethod.Put -> httpClient.put {
-                    setupRequest(
-                        token,
-                        localHost,
-                        localPort,
-                        tenant,
-                        contentType,
-                        this,
-                        path,
-                        headersMap,
-                        parametersMap,
-                        body
-                    )
-                }.bodyAsText()
-
-                else -> ""
+            val response = httpClient.request { block() }
+            val responseText = response.bodyAsText()
+            // 检查 Content-Type，防止 HTML 页面导致反序列化崩溃
+            val contentType = response.headers[HttpHeaders.ContentType]
+            if (contentType?.contains("application/json") != true && response.status.isSuccess()) {
+                // 如果请求成功但返回的不是JSON，这是一个需要处理的异常情况
+                return handleException(ResponseException(response, "Invalid Content-Type: Expected JSON but got $contentType"))
             }
-            Log.d(method.value, "path: $path  response: $response")
-            val result = json.decodeFromString(serializer, response)
-            if (result.code == ResultCodeType.NO_LOGIN.code && path != config.loginPath) {
-                val loginPayload = createLoginModel(config.getLoginKeyStyle(), config.username, config.password)
-                val r = httpClient.post {
-                    url {
-                        this.protocol = if (localHost.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
-                        this.host = localHost.removePrefix("https://").removePrefix("http://")
-                        localPort?.let {
-                            this.port = it
-                        }
-                        path(config.loginPath)
-                        setBody(loginPayload)
-                    }
-                    contentType(ContentType.Application.Json)
-                }.bodyAsText()
-                Log.d("Post", "makeRequest: 重新登录  path: ${config.loginPath}  response: $r")
-                val loginResult = json.decodeFromString<ResultModel<UserToken>>(r)
-                if (loginResult.isSuccess()) {
-                    loginResult.token?.let {
-                        config.onNewTokenReceived(it.token, it.tenant)
-                    }
-                    return makeRequest(serializer, method, path, body, contentType, headersMap, parametersMap)
+            val result = json.decodeFromString(serializer, responseText)
+            Log.d("HTTP_${response.request.method.value}", "path: ${response.request.url.encodedPath} response: $result")
+            // 检查是否需要重新登录 (401)
+            if (result.code == ResultCodeType.NO_LOGIN.code) {
+                // 尝试重新登录
+                val reLoginSuccess = reLogin()
+                return if (reLoginSuccess) {
+                    // 如果重登录成功，则重试原始请求
+                    executeRequest(serializer, block)
                 } else {
-                    return ResultModel.Companion.error(message = loginResult.message ?: "登录失败")
+                    ResultModel.error(message = "自动重新登录失败")
                 }
-            } else {
-                return result
             }
-
+            return result
         } catch (e: Exception) {
-            return handleException(e, path)
+            return handleException(e)
         }
     }
 
-    private fun setupRequest(
-        token: String,
-        host: String,
-        port: Int?,
-        tenant: String,
-        contentType: ContentType,
-        requestBuilder: HttpRequestBuilder,
+    /**
+     * 自动重新登录的逻辑
+     * @return Boolean 是否成功
+     */
+    private suspend fun reLogin(): Boolean {
+        try {
+            val loginPayload = createLoginModel(json,config.getLoginKeyStyle(),config.username,config.password)
+            // 发起登录请求
+            val response = httpClient.post(config.loginPath) {
+                setBody(loginPayload)
+                contentType(ContentType.Application.Json)
+            }
+
+            val loginResult = response.body<ResultModel<UserToken>>() // ContentNegotiation 自动解析
+            if (loginResult.isSuccess()) {
+                loginResult.token?.let {
+                    config.onNewTokenReceived(it.token, it.tenant)
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("HttpUtil", "Relogin failed: ${e.message}")
+        }
+        return false
+    }
+
+    // GET 请求
+    suspend inline fun <reified T> get(
         path: String,
-        headersMap: Map<String, String>,
-        parametersMap: Map<String, String>,
-        body: Any? = null,
-    ) {
-        // 设置请求头
-        headersMap.forEach {
-            requestBuilder.headers.append(it.key, it.value)
-        }
-
-        if (token.isNotEmpty()) {
-            requestBuilder.headers.append(HttpHeaders.Authorization, "Bearer $token")
-        }
-        if (tenant.isNotEmpty()) {
-            requestBuilder.headers.append("tenant", tenant)
-        }
-        if (!path.contains("http")) {
-            // 设置 URL 和参数
-            requestBuilder.url {
-                this.protocol = if (host.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
-                this.host = host.split("//")[1]
-                port?.let {
-                    this.port = it
-                }
-                path(path)
-                parametersMap.forEach {
-                    parameters.append(it.key, it.value)
-                }
-                // 设置请求体
-                body?.let {
-                    requestBuilder.setBody(body)
+        parametersMap: Map<String, String> = emptyMap(),
+    ): ResultModel<T> {
+        return executeRequest(serializer()) {
+            method = HttpMethod.Get
+            if (path.startsWith("http")){
+                url(path)
+            }else {
+                url {
+                    path(path)
                 }
             }
-        } else {
-            requestBuilder.url(path)
-            requestBuilder.url {
-                parametersMap.forEach {
-                    parameters.append(it.key, it.value)
-                }
-                // 设置请求体
-                body?.let {
-                    requestBuilder.setBody(body)
-                }
-            }
-        }
-        requestBuilder.contentType(contentType)
-    }
-
-    private fun <T> handleException(e: Exception, path: String): ResultModel<T> {
-        Log.e("http", "Error in path: $path \n" + e.stackTraceToString())
-        return when (e) {
-            is HttpRequestTimeoutException -> ResultModel(ResultCodeType.ERROR.code, "网络请求超时")
-            is ConnectTimeoutException -> ResultModel(ResultCodeType.ERROR.code, "网络连接超时")
-            is SerializationException -> ResultModel(ResultCodeType.ERROR.code, "数据解析异常")
-            else -> ResultModel(ResultCodeType.ERROR.code, "网络连接异常")
+            parametersMap.forEach { (key, value) -> parameter(key, value) }
         }
     }
 
@@ -233,98 +154,107 @@ class HttpUtil(
     suspend inline fun <reified T> post(
         path: String,
         body: Any? = null,
-        headersMap: Map<String, String> = emptyMap(),
         parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
-        return withContext(Dispatchers.IO) {
-            makeRequest(
-                serializer = serializer(),
-                HttpMethod.Post,
-                path,
-                body,
-                headersMap = headersMap,
-                parametersMap = parametersMap
-            )
-        }
-    }
-
-    // GET 请求
-    suspend inline fun <reified T> get(
-        path: String,
-        headersMap: Map<String, String> = emptyMap(),
-        parametersMap: Map<String, String> = emptyMap(),
-    ): ResultModel<T> {
-        return withContext(Dispatchers.IO) {
-            makeRequest(
-                serializer = serializer(),
-                HttpMethod.Get,
-                path,
-                headersMap = headersMap,
-                parametersMap = parametersMap
-            )
+        return executeRequest(serializer()) {
+            method = HttpMethod.Post
+            if (path.startsWith("http")){
+                url(path)
+            }else {
+                url {
+                    path(path)
+                }
+            }
+            parametersMap.forEach { (key, value) -> parameter(key, value) }
+            body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
         }
     }
 
     // DELETE 请求
     suspend inline fun <reified T> delete(
         path: String,
-        headersMap: Map<String, String> = emptyMap(),
+        body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
-        return withContext(Dispatchers.IO) {
-            makeRequest(
-                serializer = serializer(),
-                HttpMethod.Delete,
-                path,
-                headersMap = headersMap,
-                parametersMap = parametersMap
-            )
+        return executeRequest(serializer()) {
+            method = HttpMethod.Delete
+            if (path.startsWith("http")){
+                url(path)
+            }else {
+                url {
+                    path(path)
+                }
+            }
+            parametersMap.forEach { (key, value) -> parameter(key, value) }
+            body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
         }
     }
 
     // PUT 请求
     suspend inline fun <reified T> put(
         path: String,
-        body: String = "",
-        headersMap: Map<String, String> = emptyMap(),
+        body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
-        return withContext(Dispatchers.IO) {
-            makeRequest(
-                serializer = serializer(),
-                HttpMethod.Put,
-                path,
-                body,
-                headersMap = headersMap,
-                parametersMap = parametersMap
-            )
+        return executeRequest(serializer()) {
+            method = HttpMethod.Put
+            if (path.startsWith("http")){
+                url(path)
+            }else {
+                url {
+                    path(path)
+                }
+            }
+            parametersMap.forEach { (key, value) -> parameter(key, value) }
+            body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
+        }
+    }
+    private fun <T> handleException(e: Exception): ResultModel<T> {
+        Log.e("http", e.stackTraceToString())
+        // 根据异常类型，映射到我们自定义的错误码和消息
+        return when (e) {
+            is HttpRequestTimeoutException, is ConnectTimeoutException ->
+                ResultModel(code = CustomResultCode.TIMEOUT_ERROR, message = "网络请求超时")
+
+            is UnresolvedAddressException ->
+                ResultModel(code = CustomResultCode.CONNECTION_ERROR, message = "无法连接到服务器")
+
+            is SerializationException ->
+                ResultModel(code = CustomResultCode.SERIALIZATION_ERROR, message = "数据解析异常: ${e.message}")
+
+            // 对于服务器返回的非2xx错误，Ktor会抛出ResponseException
+            is ResponseException ->
+                ResultModel(code = e.response.status.value, message = "服务器错误: ${e.response.status.description}")
+
+            else ->
+                ResultModel(code = CustomResultCode.UNKNOWN_ERROR, message = "未知网络异常: ${e.message}")
         }
     }
 
+    suspend fun uploadFile(file: File): ResultModel<JsonObject> {
+        return try {
+            // 利用 DefaultRequest 插件自动拼接 host 和 port
+            val urlPath = config.uploadFilePath
+            val bucketName = config.bucketName
 
-    suspend fun uploadFile(file: File, config: NetworkConfig): ResultModel<JsonObject> {
-        return withContext(Dispatchers.IO) {
-            val url = kotlin.text.StringBuilder().append(config.serverAddress)
-            if (config.serverPort.isNotEmpty()) url.append(":").append(config.serverPort)
-            url.append(config.uploadFilePath)
-            //存储桶名称
-            url.append("?bucketName=scaleErp")
-            val result = httpClient.submitFormWithBinaryData(url = url.toString(), formData = formData {
-                append("file", file.readBytes(), headers = Headers.build {
-                    append(HttpHeaders.ContentType, "image/png")
-                    append(HttpHeaders.ContentDisposition, "filename=${file.name}")
-                })
-            }) {
-                if (config.token.isNotEmpty()) {
-                    headers.append(HttpHeaders.Authorization, "Bearer ${config.token}")
+            val response = httpClient.submitFormWithBinaryData(
+                url = "$urlPath?bucketName=$bucketName",
+                formData = formData {
+                    append("file", file.readBytes(), Headers.build {
+                        append(HttpHeaders.ContentType, "image/png")
+                        append(HttpHeaders.ContentDisposition, "filename=${file.name}")
+                    })
                 }
-                if (config.tenant.isNotEmpty()) {
-                    headers.append("tenant", config.tenant)
-                }
+            ) {
+                // Auth 插件会自动添加 Token 和 tenant，这里不再需要
                 headers.append(HttpHeaders.Connection, "close")
             }.bodyAsText()
-            Log.d("POST", "path: ${config.uploadFilePath}  response: $result")
-            json.decodeFromString(result)
+
+            Log.d("POST", "path: $urlPath, response: $response")
+            // 这里假设上传成功返回的也是 ResultModel 结构
+            json.decodeFromString<ResultModel<JsonObject>>(response)
+        } catch (e: Exception) {
+            handleException(e)
         }
     }
 
@@ -338,6 +268,8 @@ class HttpUtil(
     suspend fun downloadFile(
         path: String,
         filePath: String,
+        // 将超时时间变成一个可选参数，并提供一个大默认值（例如20分钟）
+        timeoutMillis: Long = 1_200_000L,
         onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit
     ): ResultModel<String> {
         return withContext(Dispatchers.IO) {
@@ -348,7 +280,7 @@ class HttpUtil(
             try {
                 httpClient.prepareGet(path) { // 使用 httpUtil.httpClient 来执行网络请求
                     timeout {
-                        requestTimeoutMillis = 1200000
+                        requestTimeoutMillis = timeoutMillis
                     }
                 }.execute { httpResponse ->
                     val totalBytes = httpResponse.contentLength() ?: 0L // 获取文件总大小
@@ -385,7 +317,7 @@ class HttpUtil(
                 ResultModel.Companion.success(filePath) // 下载成功，返回文件路径
             } catch (e: Exception) {
                 // 下载过程中发生异常，返回失败结果
-                ResultModel.error(e.localizedMessage ?: "下载失败")
+                handleException(e)
             }
         }
     }
@@ -407,26 +339,89 @@ class HttpUtil(
 
 }
 
-fun createLoginModel(style: LoginKeyStyle, username: String, password: String) = buildJsonObject {
-    when (style) {
-        LoginKeyStyle.CAMEL_CASE_V1 -> {
-            put("userName", username)
-            put("passWord", password)
-        }
+fun createLoginModel(json: Json,style: LoginKeyStyle, username: String, password: String): String {
+    return json.encodeToString(JsonObject.serializer(), buildJsonObject {
+        when (style) {
+            LoginKeyStyle.CAMEL_CASE_V1 -> {
+                put("userName", username)
+                put("passWord", password)
+            }
 
-        LoginKeyStyle.LOWER_CASE_V2 -> {
-            put("username", username)
-            put("password", password)
+            LoginKeyStyle.LOWER_CASE_V2 -> {
+                put("username", username)
+                put("password", password)
+            }
         }
-    }
+    })
 }
 
-fun createDefaultHttpClient(): HttpClient {
+fun createDefaultHttpClient(config: NetworkConfigProvider): HttpClient {
     return HttpClient(CIO) {
+        // 插件1：内容协商，用于自动序列化/反序列化 @Serializable 类
+        install(ContentNegotiation) {
+            json(Json {
+                ignoreUnknownKeys = true
+                prettyPrint = true
+            })
+        }
+
+        // 插件2：超时设置
         install(HttpTimeout) {
             requestTimeoutMillis = 30000
             connectTimeoutMillis = 30000
             socketTimeoutMillis = 30000
+        }
+
+        // 插件3：认证，自动处理 Bearer Token
+        install(Auth){
+            bearer {
+                loadTokens {
+                    val token = config.token
+                    if (token.isNotEmpty()) {
+                        BearerTokens(accessToken = token, refreshToken = null)
+                    } else {
+                        null
+                    }
+                }
+                sendWithoutRequest { request ->
+                    request.url.encodedPath != config.loginPath
+                }
+            }
+        }
+
+        // 插件4：默认请求配置
+        install(DefaultRequest) {
+            val host = config.serverAddress.removePrefix("https://").removePrefix("http://")
+            val protocol = if (config.serverAddress.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
+            val port = config.serverPort.toIntOrNull()
+
+            url {
+                this.protocol = protocol
+                this.host = host
+                port?.let { this.port = it }
+                contentType(ContentType.Application.Json)
+            }
+
+            // 自动为每个请求添加 tenant header (如果存在)
+            val tenant = config.tenant
+            if (tenant.isNotEmpty()) {
+                header("tenant", tenant)
+            }
+        }
+
+        // 插件5：日志
+        install(Logging){
+            // 1. 选择一个日志记录器
+            // Logger.DEFAULT 在 Android 环境下会自动使用 AndroidLoggger。
+            logger = Logger.ANDROID
+
+            // 2. 设置日志级别
+            // LogLevel.BODY 是调试时最常用的级别，它会打印所有信息。
+            level = LogLevel.BODY
+
+            // 3. (可选) 自定义日志格式
+            // 你可以过滤或修改 header 的打印方式，例如隐藏敏感信息
+            //sanitizeHeader { header -> header == HttpHeaders.Authorization }
         }
     }
 }

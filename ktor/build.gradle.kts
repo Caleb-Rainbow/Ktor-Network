@@ -1,5 +1,4 @@
 
-
 plugins {
     id("maven-publish")
     id("com.android.library")
@@ -31,22 +30,19 @@ android {
 
     sourceSets["main"].java.srcDirs("src/main/java")
     publishing {
-
         singleVariant("release") {
             withSourcesJar()
         }
     }
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("release") {
-            groupId = "com.github.Caleb-Rainbow"
-            artifactId = "Ktor-Network"
-            version = "1.0.0-alpha4"
-
-            afterEvaluate {
-                from(components["release"])
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                groupId = "com.github.Caleb-Rainbow"
+                artifactId = "ktor"
+                version = "1.0.0-beta1"
             }
         }
     }
@@ -55,8 +51,12 @@ publishing {
 
 dependencies {
     //serialization
-    implementation(libs.serialization)
+    api(libs.serialization)
     //ktor
-    implementation(libs.ktor.client.core)
+    api(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.client.auth)
+    implementation(libs.ktor.client.logging)
 }

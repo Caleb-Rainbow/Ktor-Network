@@ -5,7 +5,7 @@ package com.util.ktor.config
  * @author 杨帅林
  * @create 2025/9/2 17:08
  **/
-interface NetworkConfig {
+interface NetworkConfigProvider {
     val serverAddress: String
     val serverPort: String
     val token: String
@@ -16,6 +16,8 @@ interface NetworkConfig {
     val uploadFilePath: String
     val checkUpdatePath: String
     val heartBeatPath: String
+
+    val bucketName: String
 
     // 当 Token 更新时，库需要一种方式来通知 App 保存新 Token
     fun onNewTokenReceived(token: String, tenant: String?)

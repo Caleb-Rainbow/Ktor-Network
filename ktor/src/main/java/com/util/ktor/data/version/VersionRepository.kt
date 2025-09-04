@@ -1,7 +1,7 @@
 package com.util.ktor.data.version
 
 import com.util.ktor.HttpUtil
-import com.util.ktor.config.NetworkConfig
+import com.util.ktor.config.NetworkConfigProvider
 import com.util.ktor.data.version.model.Version
 import com.util.ktor.model.ResultModel
 
@@ -10,7 +10,7 @@ import com.util.ktor.model.ResultModel
  * @author 杨帅林
  * @create 2024/11/23 10:56
  **/
-class VersionRepository(private val httpUtil: HttpUtil,private val config: NetworkConfig) {
+class VersionRepository(private val httpUtil: HttpUtil,private val config: NetworkConfigProvider) {
     suspend fun checkUpdate():ResultModel<Version> = httpUtil.get(path = config.checkUpdatePath)
     /**
      * 下载文件
@@ -22,5 +22,5 @@ class VersionRepository(private val httpUtil: HttpUtil,private val config: Netwo
         path: String,
         filePath: String,
         onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit
-    ) = httpUtil.downloadFile(path, filePath, onProgress)
+    ) = httpUtil.downloadFile(path, filePath, onProgress = onProgress)
 }

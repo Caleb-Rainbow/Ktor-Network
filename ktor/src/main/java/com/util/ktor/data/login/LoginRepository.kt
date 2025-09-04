@@ -1,10 +1,11 @@
 package com.util.ktor.data.login
 
 import com.util.ktor.HttpUtil
-import com.util.ktor.config.NetworkConfig
+import com.util.ktor.config.NetworkConfigProvider
 import com.util.ktor.createLoginModel
 import com.util.ktor.model.ResultModel
 import com.util.ktor.model.UserToken
+import kotlinx.serialization.json.Json
 
 /**
  * @description
@@ -13,10 +14,11 @@ import com.util.ktor.model.UserToken
  **/
 class LoginRepository(
     private val httpUtil: HttpUtil,
-    private val config: NetworkConfig
+    private val json: Json,
+    private val config: NetworkConfigProvider
 ) {
      suspend fun passwordLogin(host:String = "",username: String,password:String) : ResultModel<UserToken> = httpUtil.post<UserToken>(
          path = host + config.loginPath,
-         body = createLoginModel(style = config.getLoginKeyStyle(), username = username, password = password)
+         body = createLoginModel(json = json, style = config.getLoginKeyStyle(), username = username, password = password)
      )
 }
