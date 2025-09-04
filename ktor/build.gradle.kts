@@ -1,4 +1,3 @@
-
 plugins {
     id("maven-publish")
     id("com.android.library")
@@ -32,21 +31,26 @@ android {
     publishing {
         singleVariant("release") {
             withSourcesJar()
+            withJavadocJar()
         }
     }
 }
 
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("release") {
-                groupId = "com.github.Caleb-Rainbow"
-                artifactId = "ktor"
-                version = "1.0.0-beta1"
+
+publishing {
+    publications {
+        create<MavenPublication>("release") {
+            groupId = "com.github.Caleb-Rainbow"
+            artifactId = "Ktor-Network"
+            version = "1.0.0-beta1"
+
+            afterEvaluate {
+                from(components["release"])
             }
         }
     }
 }
+
 
 
 dependencies {
