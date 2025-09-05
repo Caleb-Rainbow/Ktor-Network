@@ -42,7 +42,7 @@ publishing {
         create<MavenPublication>("release") {
             groupId = "com.github.Caleb-Rainbow"
             artifactId = "Ktor-Network"
-            version = "1.0.0-beta1"
+            version = "1.0.0-beta2"
 
             afterEvaluate {
                 from(components["release"])
@@ -50,8 +50,6 @@ publishing {
         }
     }
 }
-
-
 
 dependencies {
     //serialization

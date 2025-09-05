@@ -112,7 +112,7 @@ class HttpUtil(
      */
     private suspend fun reLogin(): Boolean {
         try {
-            val loginPayload = createLoginModel(json,config.getLoginKeyStyle(),config.username,config.password)
+            val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
             // 发起登录请求
             val response = httpClient.post(config.loginPath) {
                 setBody(loginPayload)
@@ -139,9 +139,9 @@ class HttpUtil(
     ): ResultModel<T> {
         return executeRequest(serializer()) {
             method = HttpMethod.Get
-            if (path.startsWith("http")){
+            if (path.startsWith("http")) {
                 url(path)
-            }else {
+            } else {
                 url {
                     path(path)
                 }
@@ -158,9 +158,9 @@ class HttpUtil(
     ): ResultModel<T> {
         return executeRequest(serializer()) {
             method = HttpMethod.Post
-            if (path.startsWith("http")){
+            if (path.startsWith("http")) {
                 url(path)
-            }else {
+            } else {
                 url {
                     path(path)
                 }
@@ -178,9 +178,9 @@ class HttpUtil(
     ): ResultModel<T> {
         return executeRequest(serializer()) {
             method = HttpMethod.Delete
-            if (path.startsWith("http")){
+            if (path.startsWith("http")) {
                 url(path)
-            }else {
+            } else {
                 url {
                     path(path)
                 }
@@ -198,9 +198,9 @@ class HttpUtil(
     ): ResultModel<T> {
         return executeRequest(serializer()) {
             method = HttpMethod.Put
-            if (path.startsWith("http")){
+            if (path.startsWith("http")) {
                 url(path)
-            }else {
+            } else {
                 url {
                     path(path)
                 }
@@ -209,6 +209,7 @@ class HttpUtil(
             body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
         }
     }
+
     private fun <T> handleException(e: Exception): ResultModel<T> {
         Log.e("http", e.stackTraceToString())
         // 根据异常类型，映射到我们自定义的错误码和消息
@@ -231,7 +232,7 @@ class HttpUtil(
         }
     }
 
-    suspend fun uploadFile(file: File): ResultModel<JsonObject> {
+    suspend fun uploadFile(file: File, timeoutMillis: Long = 300_000L): ResultModel<JsonObject> {
         return try {
             // 利用 DefaultRequest 插件自动拼接 host 和 port
             val urlPath = config.uploadFilePath
@@ -246,6 +247,9 @@ class HttpUtil(
                     })
                 }
             ) {
+                timeout {
+                    requestTimeoutMillis = timeoutMillis
+                }
                 // Auth 插件会自动添加 Token 和 tenant，这里不再需要
                 headers.append(HttpHeaders.Connection, "close")
             }.bodyAsText()
@@ -262,15 +266,15 @@ class HttpUtil(
      * 下载文件实现
      * @param path 文件的 URL。
      * @param filePath 文件保存的本地路径。
+     * @param timeoutMillis 超时时间，单位毫秒。默认20分钟
      * @param onProgress 进度回调，返回当前进度、速度和剩余时间。
      * @return ResultModel<String> 包含下载成功后的文件路径或错误信息。
      */
     suspend fun downloadFile(
         path: String,
         filePath: String,
-        // 将超时时间变成一个可选参数，并提供一个大默认值（例如20分钟）
         timeoutMillis: Long = 1_200_000L,
-        onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit
+        onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit,
     ): ResultModel<String> {
         return withContext(Dispatchers.IO) {
             val file = File(filePath)
@@ -339,7 +343,7 @@ class HttpUtil(
 
 }
 
-fun createLoginModel(json: Json,style: LoginKeyStyle, username: String, password: String): String {
+fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, password: String): String {
     return json.encodeToString(JsonObject.serializer(), buildJsonObject {
         when (style) {
             LoginKeyStyle.CAMEL_CASE_V1 -> {
@@ -373,7 +377,7 @@ fun createDefaultHttpClient(config: NetworkConfigProvider): HttpClient {
         }
 
         // 插件3：认证，自动处理 Bearer Token
-        install(Auth){
+        install(Auth) {
             bearer {
                 loadTokens {
                     val token = config.token
@@ -410,7 +414,7 @@ fun createDefaultHttpClient(config: NetworkConfigProvider): HttpClient {
         }
 
         // 插件5：日志
-        install(Logging){
+        install(Logging) {
             // 1. 选择一个日志记录器
             // Logger.DEFAULT 在 Android 环境下会自动使用 AndroidLoggger。
             logger = Logger.ANDROID
