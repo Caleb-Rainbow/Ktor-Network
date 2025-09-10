@@ -1,4 +1,4 @@
-package com.util.ktor.model
+package com.util.ktor.data.login.model
 
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName

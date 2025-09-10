@@ -18,6 +18,8 @@ interface NetworkConfigProvider {
     val heartBeatPath: String
 
     val bucketName: String
+    val getLogoPath: String
+        get() = "https://vis.xingchenwulian.com/deviceLogo/selectDeviceLogo"
 
     // 当 Token 更新时，库需要一种方式来通知 App 保存新 Token
     fun onNewTokenReceived(token: String, tenant: String?)

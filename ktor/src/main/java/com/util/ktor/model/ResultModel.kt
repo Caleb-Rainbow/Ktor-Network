@@ -1,6 +1,7 @@
 package com.util.ktor.model
 
 
+import com.util.ktor.data.login.model.UserToken
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 

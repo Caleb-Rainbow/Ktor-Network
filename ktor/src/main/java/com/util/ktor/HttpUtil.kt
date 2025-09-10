@@ -3,10 +3,10 @@ package com.util.ktor
 import android.util.Log
 import com.util.ktor.config.LoginKeyStyle
 import com.util.ktor.config.NetworkConfigProvider
+import com.util.ktor.data.login.model.UserToken
 import com.util.ktor.model.CustomResultCode
 import com.util.ktor.model.ResultCodeType
 import com.util.ktor.model.ResultModel
-import com.util.ktor.model.UserToken
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO

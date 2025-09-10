@@ -3,8 +3,8 @@ package com.util.ktor.data.login
 import com.util.ktor.HttpUtil
 import com.util.ktor.config.NetworkConfigProvider
 import com.util.ktor.createLoginModel
+import com.util.ktor.data.login.model.UserToken
 import com.util.ktor.model.ResultModel
-import com.util.ktor.model.UserToken
 import kotlinx.serialization.json.Json
 
 /**
