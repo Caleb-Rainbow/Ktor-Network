@@ -5,8 +5,9 @@ import com.util.ktor.config.LoginKeyStyle
 import com.util.ktor.config.NetworkConfigProvider
 import com.util.ktor.data.login.model.UserToken
 import com.util.ktor.model.CustomResultCode
-import com.util.ktor.model.ResultCodeType
 import com.util.ktor.model.ResultModel
+import com.util.ktor.plugin.AuthRefreshLock
+import com.util.ktor.plugin.CustomAuthTriggerPlugin
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -51,6 +52,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.network.UnresolvedAddressException
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
@@ -89,48 +91,12 @@ class HttpUtil(
             }
             val result = json.decodeFromString(serializer, responseText)
             Log.d("HTTP_${response.request.method.value}", "path: ${response.request.url.encodedPath} response: $result")
-            // 检查是否需要重新登录 (401)
-            if (result.code == ResultCodeType.NO_LOGIN.code) {
-                // 尝试重新登录
-                val reLoginSuccess = reLogin()
-                return if (reLoginSuccess) {
-                    // 如果重登录成功，则重试原始请求
-                    executeRequest(serializer, block)
-                } else {
-                    ResultModel.error(message = "自动重新登录失败")
-                }
-            }
             return result
         } catch (e: Exception) {
             return handleException(e)
         }
     }
 
-    /**
-     * 自动重新登录的逻辑
-     * @return Boolean 是否成功
-     */
-    private suspend fun reLogin(): Boolean {
-        try {
-            val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
-            // 发起登录请求
-            val response = httpClient.post(config.loginPath) {
-                setBody(loginPayload)
-                contentType(ContentType.Application.Json)
-            }
-
-            val loginResult = response.body<ResultModel<UserToken>>() // ContentNegotiation 自动解析
-            if (loginResult.isSuccess()) {
-                loginResult.token?.let {
-                    config.onNewTokenReceived(it.token, it.tenant)
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("HttpUtil", "Relogin failed: ${e.message}")
-        }
-        return false
-    }
 
     // GET 请求
     suspend inline fun <reified T> get(
@@ -359,7 +325,7 @@ fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, passwor
     })
 }
 
-fun createDefaultHttpClient(config: NetworkConfigProvider): HttpClient {
+fun createDefaultHttpClient(config: NetworkConfigProvider,json: Json): HttpClient {
     return HttpClient(CIO) {
         // 插件1：内容协商，用于自动序列化/反序列化 @Serializable 类
         install(ContentNegotiation) {
@@ -367,6 +333,10 @@ fun createDefaultHttpClient(config: NetworkConfigProvider): HttpClient {
                 ignoreUnknownKeys = true
                 prettyPrint = true
             })
+        }
+
+        install(CustomAuthTriggerPlugin){
+            this.json = json
         }
 
         // 插件2：超时设置
@@ -389,6 +359,50 @@ fun createDefaultHttpClient(config: NetworkConfigProvider): HttpClient {
                 }
                 sendWithoutRequest { request ->
                     request.url.encodedPath != config.loginPath
+                }
+
+                refreshTokens {
+                    // 使用全局锁来确保只有一个刷新操作在执行
+                    AuthRefreshLock.mutex.withLock {
+                        // `oldTokens` 是导致本次请求失败的旧 Token
+                        val oldTokens = this.oldTokens
+                        // `currentSavedToken` 是我们共享配置中当前存储的 Token
+                        val currentSavedToken = config.token
+
+                        // 关键检查：在我们等待锁的过程中，Token 是否已经被其他请求刷新了？
+                        // 如果当前存储的 Token 和导致失败的旧 Token 不一样了，
+                        // 说明刷新已经完成，我们直接使用新 Token 即可。
+                        if (oldTokens?.accessToken != currentSavedToken) {
+                            println("Ktor Auth: Token 已被其他并发请求刷新，直接使用新 Token。")
+                            BearerTokens(accessToken = currentSavedToken, refreshToken = "")
+                        } else {
+                            // 如果 Token 还是旧的，说明我们是第一个拿到锁并需要执行刷新的请求。
+                            println("Ktor Auth: Token 已过期，开始执行刷新操作...")
+                            val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
+
+                            // 执行实际的登录（刷新）请求
+                            val response = client.post(config.loginPath) {
+                                markAsRefreshTokenRequest()
+                                setBody(loginPayload)
+                                contentType(ContentType.Application.Json)
+                            }
+
+                            val loginResult = response.body<ResultModel<UserToken>>()
+                            if (loginResult.isSuccess() && loginResult.token != null) {
+                                val newToken = loginResult.token.token
+                                val newTenant = loginResult.token.tenant
+                                // 更新本地存储的 Token
+                                config.onNewTokenReceived(newToken, newTenant)
+                                println("Ktor Auth: Token 刷新成功。")
+                                // 返回新的 BearerTokens，Auth 插件会用它来重试
+                                BearerTokens(accessToken = newToken, refreshToken = "")
+                            } else {
+                                // 如果重登录失败，则返回 null，原始请求将最终失败
+                                println("Ktor Auth: 重新登录失败。")
+                                null
+                            }
+                        }
+                    }
                 }
             }
         }

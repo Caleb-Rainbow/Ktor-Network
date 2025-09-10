@@ -42,7 +42,7 @@ publishing {
         create<MavenPublication>("release") {
             groupId = "com.github.Caleb-Rainbow"
             artifactId = "Ktor-Network"
-            version = "1.0.0-rc1"
+            version = "1.0.0-rc2"
 
             afterEvaluate {
                 from(components["release"])
