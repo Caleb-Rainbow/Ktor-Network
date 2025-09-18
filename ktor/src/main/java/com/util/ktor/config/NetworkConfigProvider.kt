@@ -8,7 +8,7 @@ package com.util.ktor.config
 interface NetworkConfigProvider {
     val serverAddress: String
     val serverPort: String
-    val token: String
+    var token: String
     val tenant: String
     val username: String
     val password: String

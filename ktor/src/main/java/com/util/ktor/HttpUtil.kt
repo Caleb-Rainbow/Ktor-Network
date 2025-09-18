@@ -9,7 +9,9 @@ import com.util.ktor.model.ResultModel
 import com.util.ktor.plugin.AuthRefreshLock
 import com.util.ktor.plugin.CustomAuthTriggerPlugin
 import io.ktor.client.HttpClient
+import io.ktor.client.HttpClientConfig
 import io.ktor.client.call.body
+import io.ktor.client.engine.HttpClientEngineConfig
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.DefaultRequest
@@ -180,21 +182,19 @@ class HttpUtil(
         Log.e("http", e.stackTraceToString())
         // 根据异常类型，映射到我们自定义的错误码和消息
         return when (e) {
-            is HttpRequestTimeoutException, is ConnectTimeoutException ->
-                ResultModel(code = CustomResultCode.TIMEOUT_ERROR, message = "网络请求超时")
+            is HttpRequestTimeoutException, is ConnectTimeoutException -> ResultModel(
+                code = CustomResultCode.TIMEOUT_ERROR,
+                message = "网络请求超时"
+            )
 
-            is UnresolvedAddressException ->
-                ResultModel(code = CustomResultCode.CONNECTION_ERROR, message = "无法连接到服务器")
+            is UnresolvedAddressException -> ResultModel(code = CustomResultCode.CONNECTION_ERROR, message = "无法连接到服务器")
 
-            is SerializationException ->
-                ResultModel(code = CustomResultCode.SERIALIZATION_ERROR, message = "数据解析异常: ${e.message}")
+            is SerializationException -> ResultModel(code = CustomResultCode.SERIALIZATION_ERROR, message = "数据解析异常: ${e.message}")
 
             // 对于服务器返回的非2xx错误，Ktor会抛出ResponseException
-            is ResponseException ->
-                ResultModel(code = e.response.status.value, message = "服务器错误: ${e.response.status.description}")
+            is ResponseException -> ResultModel(code = e.response.status.value, message = "服务器错误: ${e.response.status.description}")
 
-            else ->
-                ResultModel(code = CustomResultCode.UNKNOWN_ERROR, message = "未知网络异常: ${e.message}")
+            else -> ResultModel(code = CustomResultCode.UNKNOWN_ERROR, message = "未知网络异常: ${e.message}")
         }
     }
 
@@ -205,14 +205,12 @@ class HttpUtil(
             val bucketName = config.bucketName
 
             val response = httpClient.submitFormWithBinaryData(
-                url = "$urlPath?bucketName=$bucketName",
-                formData = formData {
+                url = "$urlPath?bucketName=$bucketName", formData = formData {
                     append("file", file.readBytes(), Headers.build {
                         append(HttpHeaders.ContentType, "image/png")
                         append(HttpHeaders.ContentDisposition, "filename=${file.name}")
                     })
-                }
-            ) {
+                }) {
                 timeout {
                     requestTimeoutMillis = timeoutMillis
                 }
@@ -325,121 +323,123 @@ fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, passwor
     })
 }
 
-fun createDefaultHttpClient(config: NetworkConfigProvider,json: Json): HttpClient {
+fun createDefaultHttpClient(config: NetworkConfigProvider, json: Json): HttpClient {
     return HttpClient(CIO) {
-        // 插件1：内容协商，用于自动序列化/反序列化 @Serializable 类
-        install(ContentNegotiation) {
-            json(Json {
-                ignoreUnknownKeys = true
-                prettyPrint = true
-            })
-        }
+        installPlugins(config, json)
+    }
+}
 
-        install(CustomAuthTriggerPlugin){
-            this.json = json
-        }
+fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: NetworkConfigProvider, json: Json) {
+    // 插件1：内容协商，用于自动序列化/反序列化 @Serializable 类
+    install(ContentNegotiation) {
+        json(json)
+    }
 
-        // 插件2：超时设置
-        install(HttpTimeout) {
-            requestTimeoutMillis = 30000
-            connectTimeoutMillis = 30000
-            socketTimeoutMillis = 30000
-        }
+    // 插件2: 拦截相应根据code401修改状态码
+    install(CustomAuthTriggerPlugin) {
+        this.json = json
+    }
 
-        // 插件3：认证，自动处理 Bearer Token
-        install(Auth) {
-            bearer {
-                loadTokens {
-                    val token = config.token
-                    if (token.isNotEmpty()) {
-                        BearerTokens(accessToken = token, refreshToken = null)
+    // 插件3：超时设置
+    install(HttpTimeout) {
+        requestTimeoutMillis = 30000
+        connectTimeoutMillis = 30000
+        socketTimeoutMillis = 30000
+    }
+
+    // 插件4：认证，自动处理 Bearer Token
+    install(Auth) {
+        bearer {
+            loadTokens {
+                val token = config.token
+                if (token.isNotEmpty()) {
+                    BearerTokens(accessToken = token, refreshToken = null)
+                } else {
+                    null
+                }
+            }
+            sendWithoutRequest { request ->
+                request.url.encodedPath != config.loginPath
+            }
+
+            refreshTokens {
+                // 使用全局锁来确保只有一个刷新操作在执行
+                AuthRefreshLock.mutex.withLock {
+                    // `oldTokens` 是导致本次请求失败的旧 Token
+                    val oldTokens = this.oldTokens
+                    // `currentSavedToken` 是我们共享配置中当前存储的 Token
+                    val currentSavedToken = config.token
+
+                    // 关键检查：在我们等待锁的过程中，Token 是否已经被其他请求刷新了？
+                    // 如果当前存储的 Token 和导致失败的旧 Token 不一样了，
+                    // 说明刷新已经完成，我们直接使用新 Token 即可。
+                    if (oldTokens?.accessToken != currentSavedToken) {
+                        println("Ktor Auth: Token 已被其他并发请求刷新，直接使用新 Token。")
+                        BearerTokens(accessToken = currentSavedToken, refreshToken = "")
                     } else {
-                        null
-                    }
-                }
-                sendWithoutRequest { request ->
-                    request.url.encodedPath != config.loginPath
-                }
+                        // 如果 Token 还是旧的，说明我们是第一个拿到锁并需要执行刷新的请求。
+                        println("Ktor Auth: Token 已过期，开始执行刷新操作...")
+                        val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
 
-                refreshTokens {
-                    // 使用全局锁来确保只有一个刷新操作在执行
-                    AuthRefreshLock.mutex.withLock {
-                        // `oldTokens` 是导致本次请求失败的旧 Token
-                        val oldTokens = this.oldTokens
-                        // `currentSavedToken` 是我们共享配置中当前存储的 Token
-                        val currentSavedToken = config.token
+                        // 执行实际的登录（刷新）请求
+                        val response = client.post(config.loginPath) {
+                            markAsRefreshTokenRequest()
+                            setBody(loginPayload)
+                            contentType(ContentType.Application.Json)
+                        }
 
-                        // 关键检查：在我们等待锁的过程中，Token 是否已经被其他请求刷新了？
-                        // 如果当前存储的 Token 和导致失败的旧 Token 不一样了，
-                        // 说明刷新已经完成，我们直接使用新 Token 即可。
-                        if (oldTokens?.accessToken != currentSavedToken) {
-                            println("Ktor Auth: Token 已被其他并发请求刷新，直接使用新 Token。")
-                            BearerTokens(accessToken = currentSavedToken, refreshToken = "")
+                        val loginResult = response.body<ResultModel<UserToken>>()
+                        if (loginResult.isSuccess() && loginResult.token != null) {
+                            val newToken = loginResult.token.token
+                            val newTenant = loginResult.token.tenant
+                            // 更新本地存储的 Token
+                            config.onNewTokenReceived(newToken, newTenant)
+                            println("Ktor Auth: Token 刷新成功。")
+                            // 返回新的 BearerTokens，Auth 插件会用它来重试
+                            BearerTokens(accessToken = newToken, refreshToken = "")
                         } else {
-                            // 如果 Token 还是旧的，说明我们是第一个拿到锁并需要执行刷新的请求。
-                            println("Ktor Auth: Token 已过期，开始执行刷新操作...")
-                            val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
-
-                            // 执行实际的登录（刷新）请求
-                            val response = client.post(config.loginPath) {
-                                markAsRefreshTokenRequest()
-                                setBody(loginPayload)
-                                contentType(ContentType.Application.Json)
-                            }
-
-                            val loginResult = response.body<ResultModel<UserToken>>()
-                            if (loginResult.isSuccess() && loginResult.token != null) {
-                                val newToken = loginResult.token.token
-                                val newTenant = loginResult.token.tenant
-                                // 更新本地存储的 Token
-                                config.onNewTokenReceived(newToken, newTenant)
-                                println("Ktor Auth: Token 刷新成功。")
-                                // 返回新的 BearerTokens，Auth 插件会用它来重试
-                                BearerTokens(accessToken = newToken, refreshToken = "")
-                            } else {
-                                // 如果重登录失败，则返回 null，原始请求将最终失败
-                                println("Ktor Auth: 重新登录失败。")
-                                null
-                            }
+                            // 如果重登录失败，则返回 null，原始请求将最终失败
+                            println("Ktor Auth: 重新登录失败。")
+                            null
                         }
                     }
                 }
             }
         }
+    }
 
-        // 插件4：默认请求配置
-        install(DefaultRequest) {
-            val host = config.serverAddress.removePrefix("https://").removePrefix("http://")
-            val protocol = if (config.serverAddress.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
-            val port = config.serverPort.toIntOrNull()
+    // 插件5：默认请求配置
+    install(DefaultRequest) {
+        val host = config.serverAddress.removePrefix("https://").removePrefix("http://")
+        val protocol = if (config.serverAddress.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
+        val port = config.serverPort.toIntOrNull()
 
-            url {
-                this.protocol = protocol
-                this.host = host
-                port?.let { this.port = it }
-                contentType(ContentType.Application.Json)
-            }
-
-            // 自动为每个请求添加 tenant header (如果存在)
-            val tenant = config.tenant
-            if (tenant.isNotEmpty()) {
-                header("tenant", tenant)
-            }
+        url {
+            this.protocol = protocol
+            this.host = host
+            port?.let { this.port = it }
+            contentType(ContentType.Application.Json)
         }
 
-        // 插件5：日志
-        install(Logging) {
-            // 1. 选择一个日志记录器
-            // Logger.DEFAULT 在 Android 环境下会自动使用 AndroidLoggger。
-            logger = Logger.ANDROID
-
-            // 2. 设置日志级别
-            // LogLevel.BODY 是调试时最常用的级别，它会打印所有信息。
-            level = LogLevel.BODY
-
-            // 3. (可选) 自定义日志格式
-            // 你可以过滤或修改 header 的打印方式，例如隐藏敏感信息
-            //sanitizeHeader { header -> header == HttpHeaders.Authorization }
+        // 自动为每个请求添加 tenant header (如果存在)
+        val tenant = config.tenant
+        if (tenant.isNotEmpty()) {
+            header("tenant", tenant)
         }
+    }
+
+    // 插件6：日志
+    install(Logging) {
+        // 1. 选择一个日志记录器
+        // Logger.DEFAULT 在 Android 环境下会自动使用 AndroidLoggger。
+        logger = Logger.ANDROID
+
+        // 2. 设置日志级别
+        // LogLevel.BODY 是调试时最常用的级别，它会打印所有信息。
+        level = LogLevel.BODY
+
+        // 3. (可选) 自定义日志格式
+        // 你可以过滤或修改 header 的打印方式，例如隐藏敏感信息
+        //sanitizeHeader { header -> header == HttpHeaders.Authorization }
     }
 }

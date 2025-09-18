@@ -61,4 +61,12 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.client.auth)
     implementation(libs.ktor.client.logging)
+    //koin
+    implementation(libs.koin.core)
+
+    //test
+    testImplementation(libs.koin.test.junit4)
+    testImplementation(libs.junit)
+    testImplementation(kotlin("test"))
+    testImplementation(libs.ktor.client.mock)
 }
