@@ -42,7 +42,7 @@ publishing {
         create<MavenPublication>("release") {
             groupId = "com.github.Caleb-Rainbow"
             artifactId = "Ktor-Network"
-            version = "1.0.0-rc3"
+            version = "1.0.0"
 
             afterEvaluate {
                 from(components["release"])
@@ -56,13 +56,13 @@ dependencies {
     api(libs.serialization)
     //ktor
     api(libs.ktor.client.core)
-    implementation(libs.ktor.client.cio)
+    api(libs.ktor.client.cio)
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.client.auth)
     implementation(libs.ktor.client.logging)
     //koin
-    implementation(libs.koin.core)
+    api(libs.koin.core)
 
     //test
     testImplementation(libs.koin.test.junit4)

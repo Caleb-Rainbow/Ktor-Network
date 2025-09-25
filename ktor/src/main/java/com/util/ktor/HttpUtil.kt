@@ -375,7 +375,7 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
                     // 说明刷新已经完成，我们直接使用新 Token 即可。
                     if (oldTokens?.accessToken != currentSavedToken) {
                         println("Ktor Auth: Token 已被其他并发请求刷新，直接使用新 Token。")
-                        BearerTokens(accessToken = currentSavedToken, refreshToken = "")
+                        BearerTokens(accessToken = currentSavedToken, refreshToken = null)
                     } else {
                         // 如果 Token 还是旧的，说明我们是第一个拿到锁并需要执行刷新的请求。
                         println("Ktor Auth: Token 已过期，开始执行刷新操作...")
@@ -396,7 +396,7 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
                             config.onNewTokenReceived(newToken, newTenant)
                             println("Ktor Auth: Token 刷新成功。")
                             // 返回新的 BearerTokens，Auth 插件会用它来重试
-                            BearerTokens(accessToken = newToken, refreshToken = "")
+                            BearerTokens(accessToken = newToken, refreshToken = null)
                         } else {
                             // 如果重登录失败，则返回 null，原始请求将最终失败
                             println("Ktor Auth: 重新登录失败。")
