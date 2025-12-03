@@ -1,7 +1,7 @@
 [versions]
-agp = "8.13.0"
-kotlin = "2.2.20"
-ktor = "3.3.1"
+agp = "8.13.1"
+kotlin = "2.2.21"
+ktor = "3.3.3"
 serialization = "1.9.0"
 junit = "4.13.2"
 koin = "4.1.1"
@@ -11,6 +11,7 @@ koin = "4.1.1"
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-okhttp = {module = "io.ktor:ktor-client-okhttp",version.ref = "ktor"}
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 ktor-client-auth = { module = "io.ktor:ktor-client-auth", version.ref = "ktor" }
