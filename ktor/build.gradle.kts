@@ -1,11 +1,13 @@
+import com.android.build.api.dsl.LibraryExtension
+
 plugins {
     id("maven-publish")
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.android")
 }
 
-android {
+extensions.configure<LibraryExtension>("android") {
     namespace = "com.util.ktor"
     compileSdk = 36
 
@@ -27,7 +29,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    sourceSets["main"].java.srcDirs("src/main/java")
+    sourceSets["main"].java.directories.add("src/main/java")
     publishing {
         singleVariant("release") {
             withSourcesJar()

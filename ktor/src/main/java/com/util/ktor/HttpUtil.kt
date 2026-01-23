@@ -350,31 +350,57 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
     // 插件4：认证，自动处理 Bearer Token
     install(Auth) {
         bearer {
+            // 设置 realm，这对于 Auth 插件正确识别和响应 401 挑战是必要的
+            realm = "Access to protected resources"
+            
+            // 关键：每次请求前动态加载 token，而不是使用缓存
+            // 这里使用 lambda 确保每次都读取最新的 config.token 值
             loadTokens {
+                // 此块只在需要时被调用，且结果会被缓存
+                // 但我们后面会让 refreshTokens 来处理 token 更新
                 val token = config.token
                 if (token.isNotEmpty()) {
+                    println("Ktor Auth: loadTokens 返回现有 token")
                     BearerTokens(accessToken = token, refreshToken = null)
                 } else {
+                    println("Ktor Auth: loadTokens 返回 null (无已保存的 token)")
                     null
                 }
             }
+            
+            // 只对非登录请求发送 Authorization 头
+            // 当 token 为空时也发送请求（让服务器返回 401 来触发 refreshTokens）
             sendWithoutRequest { request ->
-                request.url.encodedPath != config.loginPath
+                val isLoginPath = request.url.encodedPath == config.loginPath
+                val hasToken = config.token.isNotEmpty()
+                // 对登录请求不发送 token，对其他请求：有 token 时才发送
+                !isLoginPath && hasToken
             }
 
             refreshTokens {
                 // 使用全局锁来确保只有一个刷新操作在执行
                 AuthRefreshLock.mutex.withLock {
-                    // `oldTokens` 是导致本次请求失败的旧 Token
+                    // `oldTokens` 是导致本次请求失败的旧 Token（首次登录后可能为 null）
                     val oldTokens = this.oldTokens
                     // `currentSavedToken` 是我们共享配置中当前存储的 Token
                     val currentSavedToken = config.token
+                    
+                    // 调试日志
+                    val oldTokenPreview = oldTokens?.accessToken?.let { 
+                        if (it.length > 16) "${it.take(6)}...${it.takeLast(6)}" else it 
+                    } ?: "null"
+                    val savedTokenPreview = if (currentSavedToken.length > 16) 
+                        "${currentSavedToken.take(6)}...${currentSavedToken.takeLast(6)}" 
+                    else currentSavedToken.ifEmpty { "empty" }
+                    println("Ktor Auth: refreshTokens - oldToken: $oldTokenPreview, savedToken: $savedTokenPreview, 相同: ${oldTokens?.accessToken == currentSavedToken}")
 
                     // 关键检查：在我们等待锁的过程中，Token 是否已经被其他请求刷新了？
-                    // 如果当前存储的 Token 和导致失败的旧 Token 不一样了，
-                    // 说明刷新已经完成，我们直接使用新 Token 即可。
-                    if (oldTokens?.accessToken != currentSavedToken) {
-                        println("Ktor Auth: Token 已被其他并发请求刷新，直接使用新 Token。")
+                    // 检查条件：
+                    // 1. currentSavedToken 必须非空（有有效的 token）
+                    // 2. currentSavedToken 和导致失败的旧 Token 不一样
+                    // 满足这两个条件说明 token 已被更新（可能是外部登录或其他请求刷新的）
+                    if (currentSavedToken.isNotEmpty() && oldTokens?.accessToken != currentSavedToken) {
+                        println("Ktor Auth: Token 已被更新（外部登录或并发刷新），直接使用新 Token。")
                         BearerTokens(accessToken = currentSavedToken, refreshToken = null)
                     } else {
                         // 如果 Token 还是旧的，说明我们是第一个拿到锁并需要执行刷新的请求。
@@ -394,7 +420,11 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
                             val newTenant = loginResult.token.tenant
                             // 更新本地存储的 Token
                             config.onNewTokenReceived(newToken, newTenant)
-                            println("Ktor Auth: Token 刷新成功。")
+                            // 记录部分 token 用于调试（只显示前后几个字符）
+                            val tokenPreview = if (newToken.length > 20) 
+                                "${newToken.take(8)}...${newToken.takeLast(8)}" 
+                            else newToken
+                            println("Ktor Auth: Token 刷新成功，新 token: $tokenPreview")
                             // 返回新的 BearerTokens，Auth 插件会用它来重试
                             BearerTokens(accessToken = newToken, refreshToken = null)
                         } else {
@@ -420,8 +450,6 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
             port?.let { this.port = it }
             contentType(ContentType.Application.Json)
         }
-
-        // 自动为每个请求添加 tenant header (如果存在)
         val tenant = config.tenant
         if (tenant.isNotEmpty()) {
             header("tenant", tenant)
@@ -430,16 +458,7 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
 
     // 插件6：日志
     install(Logging) {
-        // 1. 选择一个日志记录器
-        // Logger.DEFAULT 在 Android 环境下会自动使用 AndroidLoggger。
         logger = Logger.ANDROID
-
-        // 2. 设置日志级别
-        // LogLevel.BODY 是调试时最常用的级别，它会打印所有信息。
-        level = LogLevel.BODY
-
-        // 3. (可选) 自定义日志格式
-        // 你可以过滤或修改 header 的打印方式，例如隐藏敏感信息
-        //sanitizeHeader { header -> header == HttpHeaders.Authorization }
+        level = LogLevel.ALL
     }
 }

@@ -69,6 +69,10 @@ class CustomAuthTriggerPlugin(private val config: Config) {
                         val jsonObject = plugin.config.json.parseToJsonElement(originalBody).jsonObject
                         val code = jsonObject["code"]?.jsonPrimitive?.content?.toIntOrNull()
                         if (code == plugin.config.tokenExpiredCode) {
+                            // 记录日志，便于调试
+                            val requestUrl = response.call.request.url.encodedPath
+                            println("CustomAuthTrigger: 检测到 code=$code (token过期)，请求路径: $requestUrl，将状态码改为 401")
+                            
                             // 如果 code 匹配，创建一个新的、状态码为 401 的响应
                             val newResponse = object : HttpResponse() {
                                 override val call: HttpClientCall = response.call
