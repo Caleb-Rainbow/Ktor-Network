@@ -342,9 +342,9 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
 
     // 插件3：超时设置
     install(HttpTimeout) {
-        requestTimeoutMillis = 30000
-        connectTimeoutMillis = 30000
-        socketTimeoutMillis = 30000
+        requestTimeoutMillis = 300000
+        connectTimeoutMillis = 300000
+        socketTimeoutMillis = 300000
     }
 
     // 插件4：认证，自动处理 Bearer Token

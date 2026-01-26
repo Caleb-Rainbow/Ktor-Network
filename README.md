@@ -116,8 +116,9 @@ HttpClient(OkHttp) {
 |------|------|
 | **Android SDK** | API 26 (Android 8.0) 及以上 |
 | **Kotlin** | 2.3.0 |
-| **Gradle** | 8.0+ |
+| **Gradle** | 9.1.0+ |
 | **JDK** | 17 |
+| **Android Gradle Plugin** | 8.13.2+ |
 
 ### 依赖配置
 
@@ -136,7 +137,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.Caleb-Rainbow:Ktor-Network:1.0.2")
+    implementation("com.github.Caleb-Rainbow:Ktor-Network:1.0.4")
 }
 ```
 
@@ -208,6 +209,8 @@ val networkModule = module {
     single { LoginRepository(httpUtil = get(), json = get(), config = get()) }
     single { FileRepository(httpUtil = get(), config = get()) }
     single { VersionRepository(httpUtil = get(), config = get()) }
+    single { PersonalizationRepository(httpUtil = get(), config = get()) }
+    single { HeartRepository(httpUtil = get(), config = get()) }
 }
 ```
 
@@ -379,12 +382,12 @@ interface NetworkConfigProvider {
     val checkUpdatePath: String    // 版本检查路径
     val heartBeatPath: String      // 心跳路径
     val bucketName: String         // 存储桶名称
-    val getLogoPath: String        // Logo 获取路径（默认值）
+    val getLogoPath: String        // Logo 获取路径（默认为 "https://vis.xingchenwulian.com/deviceLogo/selectDeviceLogo"）
 
     // Token 更新回调
     fun onNewTokenReceived(token: String, tenant: String?)
 
-    // 获取登录字段命名风格
+    // 获取登录字段命名风格，默认为 CAMEL_CASE_V1
     fun getLoginKeyStyle(): LoginKeyStyle
 }
 ```
@@ -464,6 +467,32 @@ suspend fun downloadFile(
     filePath: String,
     onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit
 ): ResultModel<String>
+```
+
+#### PersonalizationRepository
+
+处理个性化配置相关请求。
+
+```kotlin
+class PersonalizationRepository(
+    private val httpUtil: HttpUtil,
+    private val config: NetworkConfigProvider
+)
+
+suspend fun getLogoUrl(deviceNumber: String): ResultModel<LogoModel>
+```
+
+#### HeartRepository
+
+处理心跳相关请求。
+
+```kotlin
+class HeartRepository(
+    private val httpUtil: HttpUtil,
+    private val config: NetworkConfigProvider
+)
+
+suspend fun heartbeat(deviceNumber: String, second: Int): ResultModel<String>
 ```
 
 ---
@@ -799,7 +828,7 @@ install(HttpTimeout) {
 ```kotlin
 install(Logging) {
     logger = Logger.ANDROID           // 使用 Android 日志记录器
-    level = LogLevel.BODY             // 记录完整的请求和响应体
+    level = LogLevel.ALL              // 记录完整的请求和响应信息，便于调试
     // 可选：过滤敏感信息
     sanitizeHeader { header -> header == HttpHeaders.Authorization }
 }
@@ -822,7 +851,10 @@ val json = Json {
 ```kotlin
 install(Auth) {
     bearer {
-        // 加载 Token
+        // 设置 realm，这对于 Auth 插件正确识别和响应 401 挑战是必要的
+        realm = "Access to protected resources"
+        
+        // 加载 Token - 每次请求前动态加载最新的 token
         loadTokens {
             val token = config.token
             if (token.isNotEmpty()) {
@@ -832,16 +864,40 @@ install(Auth) {
             }
         }
 
-        // 排除登录路径
+        // 智能的请求发送策略
         sendWithoutRequest { request ->
-            request.url.encodedPath != config.loginPath
+            val isLoginPath = request.url.encodedPath == config.loginPath
+            val hasToken = config.token.isNotEmpty()
+            // 对登录请求不发送 token，对其他请求：有 token 时才发送
+            !isLoginPath && hasToken
         }
 
-        // 刷新 Token
+        // 增强的 Token 刷新机制
         refreshTokens {
-            // 自动刷新逻辑
+            // 使用全局锁来确保只有一个刷新操作在执行
             AuthRefreshLock.mutex.withLock {
-                // 刷新 Token 的实现
+                val oldTokens = this.oldTokens
+                val currentSavedToken = config.token
+                
+                // 检查 Token 是否已被外部更新
+                if (currentSavedToken.isNotEmpty() && oldTokens?.accessToken != currentSavedToken) {
+                    BearerTokens(accessToken = currentSavedToken, refreshToken = null)
+                } else {
+                    // 执行登录刷新
+                    val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
+                    val response = client.post(config.loginPath) {
+                        markAsRefreshTokenRequest()
+                        setBody(loginPayload)
+                        contentType(ContentType.Application.Json)
+                    }
+                    val loginResult = response.body<ResultModel<UserToken>>()
+                    if (loginResult.isSuccess() && loginResult.token != null) {
+                        config.onNewTokenReceived(loginResult.token.token, loginResult.token.tenant)
+                        BearerTokens(accessToken = loginResult.token.token, refreshToken = null)
+                    } else {
+                        null
+                    }
+                }
             }
         }
     }
@@ -1080,6 +1136,21 @@ cd Ktor-Network
 ---
 
 ## 更新日志
+
+### Version 1.0.4
+
+- 新增 PersonalizationRepository 个性化配置仓库
+- 新增 HeartRepository 心跳功能仓库
+- 扩展 NetworkConfigProvider 接口，添加 getLogoPath 属性
+- 优化依赖注入模块配置，包含所有新增仓库
+
+### Version 1.0.3
+
+- 升级构建工具：Gradle 9.1.0、Kotlin 2.3.0、AGP 8.13.2
+- 增强 Ktor 认证逻辑，添加 realm 属性支持
+- 优化 Token 刷新机制，支持外部登录导致的 Token 变更
+- 改进调试日志，提升 LogLevel.ALL 以获取完整请求信息
+- 现代化构建脚本，使用新的 Android 插件配置语法
 
 ### Version 1.0.2
 
