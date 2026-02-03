@@ -12,7 +12,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.call.body
 import io.ktor.client.engine.HttpClientEngineConfig
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -39,7 +39,6 @@ import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
-import io.ktor.client.statement.request
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
@@ -48,19 +47,21 @@ import io.ktor.http.URLProtocol
 import io.ktor.http.contentLength
 import io.ktor.http.contentType
 import io.ktor.http.encodedPath
-import io.ktor.http.isSuccess
 import io.ktor.http.path
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.network.UnresolvedAddressException
+import io.ktor.utils.io.jvm.javaio.toInputStream
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import java.io.File
@@ -78,21 +79,16 @@ class HttpUtil(
     /**
      * 通用的请求执行器，包含自动重登录逻辑
      */
-    suspend fun <T> executeRequest(
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend inline fun <reified T> executeRequest(
         serializer: KSerializer<ResultModel<T>>,
         block: HttpRequestBuilder.() -> Unit,
     ): ResultModel<T> {
         try {
             val response = httpClient.request { block() }
-            val responseText = response.bodyAsText()
-            // 检查 Content-Type，防止 HTML 页面导致反序列化崩溃
-            val contentType = response.headers[HttpHeaders.ContentType]
-            if (contentType?.contains("application/json") != true && response.status.isSuccess()) {
-                // 如果请求成功但返回的不是JSON，这是一个需要处理的异常情况
-                return handleException(ResponseException(response, "Invalid Content-Type: Expected JSON but got $contentType"))
-            }
-            val result = json.decodeFromString(serializer, responseText)
-            Log.d("HTTP_${response.request.method.value}", "path: ${response.request.url.encodedPath} response: $result")
+            val result = response.bodyAsChannel().toInputStream().use { stream ->
+                    json.decodeFromStream(serializer,stream)
+                }
             return result
         } catch (e: Exception) {
             return handleException(e)
@@ -114,6 +110,7 @@ class HttpUtil(
                     path(path)
                 }
             }
+            //header(HttpHeaders.AcceptEncoding, "gzip")
             parametersMap.forEach { (key, value) -> parameter(key, value) }
         }
     }
@@ -124,7 +121,7 @@ class HttpUtil(
         body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
-        return executeRequest(serializer()) {
+        return executeRequest(serializer())  {
             method = HttpMethod.Post
             if (path.startsWith("http")) {
                 url(path)
@@ -144,7 +141,7 @@ class HttpUtil(
         body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
-        return executeRequest(serializer()) {
+        return executeRequest(serializer())  {
             method = HttpMethod.Delete
             if (path.startsWith("http")) {
                 url(path)
@@ -164,7 +161,7 @@ class HttpUtil(
         body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
     ): ResultModel<T> {
-        return executeRequest(serializer()) {
+        return executeRequest(serializer())  {
             method = HttpMethod.Put
             if (path.startsWith("http")) {
                 url(path)
@@ -178,7 +175,8 @@ class HttpUtil(
         }
     }
 
-    private fun <T> handleException(e: Exception): ResultModel<T> {
+    @PublishedApi
+    internal fun <T> handleException(e: Exception): ResultModel<T> {
         Log.e("http", e.stackTraceToString())
         // 根据异常类型，映射到我们自定义的错误码和消息
         return when (e) {
@@ -232,7 +230,7 @@ class HttpUtil(
      * @param filePath 文件保存的本地路径。
      * @param timeoutMillis 超时时间，单位毫秒。默认20分钟
      * @param onProgress 进度回调，返回当前进度、速度和剩余时间。
-     * @return ResultModel<String> 包含下载成功后的文件路径或错误信息。
+     * @return ResultModel<String> 包含下载成功后的文件路径 or 错误信息。
      */
     suspend fun downloadFile(
         path: String,
@@ -324,8 +322,26 @@ fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, passwor
 }
 
 fun createDefaultHttpClient(config: NetworkConfigProvider, json: Json): HttpClient {
-    return HttpClient(CIO) {
+    return HttpClient(OkHttp) {
+        engine {
+            duplexStreamingEnabled = true
+        }
         installPlugins(config, json)
+    }
+}
+
+fun createNoAuthDefaultHttpClient(json: Json): HttpClient {
+    return HttpClient(OkHttp){
+        engine {
+            duplexStreamingEnabled = true
+        }
+        install(ContentNegotiation) {
+            json(json)
+        }
+        install(Logging) {
+            logger = Logger.ANDROID
+            level = LogLevel.ALL
+        }
     }
 }
 
@@ -334,7 +350,9 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
     install(ContentNegotiation) {
         json(json)
     }
-
+   /* install(io.ktor.client.plugins.compression.ContentEncoding) {
+        gzip()
+    }*/
     // 插件2: 拦截相应根据code401修改状态码
     install(CustomAuthTriggerPlugin) {
         this.json = json
@@ -459,6 +477,6 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
     // 插件6：日志
     install(Logging) {
         logger = Logger.ANDROID
-        level = LogLevel.ALL
+        level = LogLevel.NONE
     }
 }
