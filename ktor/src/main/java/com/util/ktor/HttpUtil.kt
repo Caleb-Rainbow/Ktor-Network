@@ -280,7 +280,7 @@ class HttpUtil(
                     }
                 }
                 outputStream.close() // 关闭输出流
-                ResultModel.Companion.success(filePath) // 下载成功，返回文件路径
+                ResultModel.success(filePath) // 下载成功，返回文件路径
             } catch (e: Exception) {
                 // 下载过程中发生异常，返回失败结果
                 handleException(e)
@@ -324,7 +324,10 @@ fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, passwor
 fun createDefaultHttpClient(config: NetworkConfigProvider, json: Json): HttpClient {
     return HttpClient(OkHttp) {
         engine {
-            duplexStreamingEnabled = true
+            //duplexStreamingEnabled = true
+            config {
+                protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            }
         }
         installPlugins(config, json)
     }
@@ -333,7 +336,10 @@ fun createDefaultHttpClient(config: NetworkConfigProvider, json: Json): HttpClie
 fun createNoAuthDefaultHttpClient(json: Json): HttpClient {
     return HttpClient(OkHttp){
         engine {
-            duplexStreamingEnabled = true
+            //duplexStreamingEnabled = true
+            config {
+                protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            }
         }
         install(ContentNegotiation) {
             json(json)

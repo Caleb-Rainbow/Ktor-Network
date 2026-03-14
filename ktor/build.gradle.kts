@@ -25,8 +25,8 @@ extensions.configure<LibraryExtension>("android") {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     sourceSets["main"].java.directories.add("src/main/java")
@@ -44,7 +44,7 @@ publishing {
         create<MavenPublication>("release") {
             groupId = "com.github.Caleb-Rainbow"
             artifactId = "Ktor-Network"
-            version = "2026.02.03.01"
+            version = "2026.03.14.01"
 
             afterEvaluate {
                 from(components["release"])
