@@ -22,7 +22,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {
@@ -32,12 +35,11 @@ android {
 }
 
 kotlin {
-    compilerOptions{
-        jvmTarget = JvmTarget.fromTarget("17")
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_21
     }
 }
 
 dependencies {
-
+    implementation(project(":ktor"))
 }
-

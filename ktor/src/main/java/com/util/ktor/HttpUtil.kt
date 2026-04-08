@@ -50,6 +50,7 @@ import io.ktor.http.encodedPath
 import io.ktor.http.path
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.network.UnresolvedAddressException
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
@@ -66,11 +67,6 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import java.io.File
 
-/**
- * @description http请求封装
- * @author 杨帅林
- * @create 2024/10/18 14:09
- **/
 private val MIME_TYPES = mapOf(
     "png" to "image/png",
     "jpg" to "image/jpeg",
@@ -91,6 +87,14 @@ private val MIME_TYPES = mapOf(
     "txt" to "text/plain",
     "json" to "application/json",
     "zip" to "application/zip",
+    "apk" to "application/vnd.android.package-archive",
+    "pptx" to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt" to "application/vnd.ms-powerpoint",
+    "rar" to "application/vnd.rar",
+    "7z" to "application/x-7z-compressed",
+    "wps" to "application/kswps",
+    "et" to "application/kset",
+    "dps" to "application/ksdps",
 )
 
 private fun File.contentType(): String {
@@ -103,9 +107,7 @@ class HttpUtil(
     val json: Json,
     val config: NetworkConfigProvider,
 ) {
-    /**
-     * 通用的请求执行器，包含自动重登录逻辑
-     */
+
     @OptIn(ExperimentalSerializationApi::class)
     suspend inline fun <reified T> executeRequest(
         serializer: KSerializer<ResultModel<T>>,
@@ -114,225 +116,212 @@ class HttpUtil(
         try {
             val response = httpClient.request { block() }
             val result = response.bodyAsChannel().toInputStream().use { stream ->
-                    json.decodeFromStream(serializer,stream)
-                }
+                json.decodeFromStream(serializer, stream)
+            }
             return result
         } catch (e: Exception) {
             return handleException(e)
         }
     }
 
+    suspend inline fun <reified T> request(
+        method: HttpMethod,
+        path: String,
+        body: Any? = null,
+        parametersMap: Map<String, String> = emptyMap(),
+    ): ResultModel<T> = executeRequest(serializer()) {
+        this.method = method
+        if (path.startsWith("http")) {
+            url(path)
+        } else {
+            url { path(path) }
+        }
+        parametersMap.forEach { (key, value) -> parameter(key, value) }
+        body?.let { setBody(it) }
+    }
 
-    // GET 请求
     suspend inline fun <reified T> get(
         path: String,
         parametersMap: Map<String, String> = emptyMap(),
-    ): ResultModel<T> {
-        return executeRequest(serializer()) {
-            method = HttpMethod.Get
-            if (path.startsWith("http")) {
-                url(path)
-            } else {
-                url {
-                    path(path)
-                }
-            }
-            //header(HttpHeaders.AcceptEncoding, "gzip")
-            parametersMap.forEach { (key, value) -> parameter(key, value) }
-        }
-    }
+    ) = request<T>(HttpMethod.Get, path, parametersMap = parametersMap)
 
-    // POST 请求
     suspend inline fun <reified T> post(
         path: String,
         body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
-    ): ResultModel<T> {
-        return executeRequest(serializer())  {
-            method = HttpMethod.Post
-            if (path.startsWith("http")) {
-                url(path)
-            } else {
-                url {
-                    path(path)
-                }
-            }
-            parametersMap.forEach { (key, value) -> parameter(key, value) }
-            body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
-        }
-    }
+    ) = request<T>(HttpMethod.Post, path, body, parametersMap)
 
-    // DELETE 请求
     suspend inline fun <reified T> delete(
         path: String,
         body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
-    ): ResultModel<T> {
-        return executeRequest(serializer())  {
-            method = HttpMethod.Delete
-            if (path.startsWith("http")) {
-                url(path)
-            } else {
-                url {
-                    path(path)
-                }
-            }
-            parametersMap.forEach { (key, value) -> parameter(key, value) }
-            body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
-        }
-    }
+    ) = request<T>(HttpMethod.Delete, path, body, parametersMap)
 
-    // PUT 请求
     suspend inline fun <reified T> put(
         path: String,
         body: Any? = null,
         parametersMap: Map<String, String> = emptyMap(),
-    ): ResultModel<T> {
-        return executeRequest(serializer())  {
-            method = HttpMethod.Put
-            if (path.startsWith("http")) {
-                url(path)
-            } else {
-                url {
-                    path(path)
-                }
-            }
-            parametersMap.forEach { (key, value) -> parameter(key, value) }
-            body?.let { setBody(it) } // ContentNegotiation 会自动处理序列化
-        }
-    }
+    ) = request<T>(HttpMethod.Put, path, body, parametersMap)
 
     @PublishedApi
     internal fun <T> handleException(e: Exception): ResultModel<T> {
-        Log.e("http", e.stackTraceToString())
-        // 根据异常类型，映射到我们自定义的错误码和消息
+        Log.e(TAG, e.stackTraceToString())
         return when (e) {
             is HttpRequestTimeoutException, is ConnectTimeoutException -> ResultModel(
                 code = CustomResultCode.TIMEOUT_ERROR,
                 message = "网络请求超时"
             )
 
-            is UnresolvedAddressException -> ResultModel(code = CustomResultCode.CONNECTION_ERROR, message = "无法连接到服务器")
+            is UnresolvedAddressException -> ResultModel(
+                code = CustomResultCode.CONNECTION_ERROR,
+                message = "无法连接到服务器"
+            )
 
-            is SerializationException -> ResultModel(code = CustomResultCode.SERIALIZATION_ERROR, message = "数据解析异常: ${e.message}")
+            is SerializationException -> ResultModel(
+                code = CustomResultCode.SERIALIZATION_ERROR,
+                message = "数据解析异常: ${e.message}"
+            )
 
-            // 对于服务器返回的非2xx错误，Ktor会抛出ResponseException
-            is ResponseException -> ResultModel(code = e.response.status.value, message = "服务器错误: ${e.response.status.description}")
+            is ResponseException -> ResultModel(
+                code = e.response.status.value,
+                message = "服务器错误: ${e.response.status.description}"
+            )
 
-            else -> ResultModel(code = CustomResultCode.UNKNOWN_ERROR, message = "未知网络异常: ${e.message}")
+            else -> ResultModel(
+                code = CustomResultCode.UNKNOWN_ERROR,
+                message = "未知网络异常: ${e.message}"
+            )
         }
     }
 
-    suspend fun uploadFile(file: File, timeoutMillis: Long = 300_000L): ResultModel<JsonObject> {
+    suspend fun uploadFile(
+        file: File,
+        timeoutMillis: Long = 300_000L,
+    ): ResultModel<JsonObject> {
         return try {
-            // 利用 DefaultRequest 插件自动拼接 host 和 port
+            val fileSizeMB = file.length() / (1024.0 * 1024.0)
+            if (fileSizeMB > 100) {
+                Log.w(
+                    TAG,
+                    "上传文件较大: ${String.format("%.2f", fileSizeMB)}MB, 注意内存使用"
+                )
+            }
+
             val urlPath = config.uploadFilePath
             val bucketName = config.bucketName
 
             val response = httpClient.submitFormWithBinaryData(
-                url = "$urlPath?bucketName=$bucketName", formData = formData {
+                url = "$urlPath?bucketName=$bucketName",
+                formData = formData {
                     append("file", file.readBytes(), Headers.build {
                         append(HttpHeaders.ContentType, file.contentType())
-                        append(HttpHeaders.ContentDisposition, "filename=${file.name}")
+                        append(
+                            HttpHeaders.ContentDisposition,
+                            "filename=${file.name}"
+                        )
                     })
-                }) {
+                }
+            ) {
                 timeout {
                     requestTimeoutMillis = timeoutMillis
                 }
-                // Auth 插件会自动添加 Token 和 tenant，这里不再需要
                 headers.append(HttpHeaders.Connection, "close")
             }.bodyAsText()
 
-            Log.d("POST", "path: $urlPath, response: $response")
-            // 这里假设上传成功返回的也是 ResultModel 结构
+            Log.d(TAG, "uploadFile path: $urlPath")
             json.decodeFromString<ResultModel<JsonObject>>(response)
         } catch (e: Exception) {
             handleException(e)
         }
     }
 
-    /**
-     * 下载文件实现
-     * @param path 文件的 URL。
-     * @param filePath 文件保存的本地路径。
-     * @param timeoutMillis 超时时间，单位毫秒。默认20分钟
-     * @param onProgress 进度回调，返回当前进度、速度和剩余时间。
-     * @return ResultModel<String> 包含下载成功后的文件路径 or 错误信息。
-     */
     suspend fun downloadFile(
         path: String,
         filePath: String,
         timeoutMillis: Long = 1_200_000L,
         onProgress: (progress: Float, speed: String, remainingTime: String) -> Unit,
     ): ResultModel<String> {
+        if (filePath.contains("..")) {
+            return ResultModel.error("非法文件路径")
+        }
         return withContext(Dispatchers.IO) {
             val file = File(filePath)
-            // 确保文件所在目录存在
             file.parentFile?.mkdirs()
-            val outputStream = file.outputStream()
-            try {
-                httpClient.prepareGet(path) { // 使用 httpUtil.httpClient 来执行网络请求
-                    timeout {
-                        requestTimeoutMillis = timeoutMillis
-                    }
-                }.execute { httpResponse ->
-                    val totalBytes = httpResponse.contentLength() ?: 0L // 获取文件总大小
-                    var bytesRead = 0L // 已读取的字节数
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE) // 缓冲区
-                    val channel = httpResponse.bodyAsChannel() // 获取响应的字节通道
+            file.outputStream().use { outputStream ->
+                try {
+                    httpClient.prepareGet(path) {
+                        timeout {
+                            requestTimeoutMillis = timeoutMillis
+                        }
+                    }.execute { httpResponse ->
+                        val totalBytes = httpResponse.contentLength() ?: 0L
+                        var bytesRead = 0L
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        val channel = httpResponse.bodyAsChannel()
 
-                    val startTime = System.currentTimeMillis() // 开始下载时间
-                    var lastUpdateTime = startTime // 上次更新时间
+                        val startTime = System.currentTimeMillis()
+                        var lastUpdateTime = startTime
 
-                    while (!channel.isClosedForRead) {
-                        val read = channel.readAvailable(buffer) // 从通道读取字节到缓冲区
-                        if (read == -1) break // 读取结束
-                        outputStream.write(buffer, 0, read) // 将缓冲区内容写入文件
-                        bytesRead += read // 更新已读取字节数
+                        while (!channel.isClosedForRead) {
+                            val read = channel.readAvailable(buffer)
+                            if (read == -1) break
+                            outputStream.write(buffer, 0, read)
+                            bytesRead += read
 
-                        val currentTime = System.currentTimeMillis() // 当前时间
-                        // 每 500 毫秒更新一次进度，或者在下载完成时立即更新
-                        if (currentTime - lastUpdateTime >= 500 || bytesRead == totalBytes || bytesRead == totalBytes - 1) {
-                            val progress = if (totalBytes > 0) bytesRead.toFloat() / totalBytes else 0f
-                            val elapsedTime = (currentTime - startTime).toFloat() / 1000 // 已用时间 (秒)
-                            val speed = if (elapsedTime > 0) (bytesRead / elapsedTime / (1024 * 1024)).format(2) else "0.00" // 速度 (MB/s)
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastUpdateTime >= 500 ||
+                                bytesRead == totalBytes ||
+                                bytesRead == totalBytes - 1
+                            ) {
+                                val progress =
+                                    if (totalBytes > 0) bytesRead.toFloat() / totalBytes else 0f
+                                val elapsedTime =
+                                    (currentTime - startTime).toFloat() / 1000
+                                val speed = if (elapsedTime > 0)
+                                    (bytesRead / elapsedTime / (1024 * 1024)).format(2)
+                                else
+                                    "0.00"
 
-                            // 估算剩余时间
-                            val remainingTimeSeconds = if (bytesRead > 0) (elapsedTime / bytesRead) * (totalBytes - bytesRead) else 0f
-                            val remainingTimeFormatted = formatTime(remainingTimeSeconds.toLong())
+                                val remainingTimeSeconds = if (bytesRead > 0)
+                                    (elapsedTime / bytesRead) * (totalBytes - bytesRead)
+                                else
+                                    0f
+                                val remainingTimeFormatted =
+                                    formatTime(remainingTimeSeconds.toLong())
 
-                            onProgress(progress, "$speed MB/s", remainingTimeFormatted)
-                            lastUpdateTime = currentTime
+                                onProgress(
+                                    progress,
+                                    "$speed MB/s",
+                                    remainingTimeFormatted
+                                )
+                                lastUpdateTime = currentTime
+                            }
                         }
                     }
+                    ResultModel.success(filePath)
+                } catch (e: Exception) {
+                    handleException(e)
                 }
-                outputStream.close() // 关闭输出流
-                ResultModel.success(filePath) // 下载成功，返回文件路径
-            } catch (e: Exception) {
-                // 下载过程中发生异常，返回失败结果
-                handleException(e)
             }
         }
     }
 
-    /**
-     * 格式化浮点数为指定位数的小数
-     */
     private fun Float.format(digits: Int) = "%.${digits}f".format(this)
 
-    /**
-     * 格式化秒数为易读的时间字符串（例如 "2分10秒"）
-     */
     private fun formatTime(totalSeconds: Long): String {
         if (totalSeconds <= 0) return "0秒"
         val minutes = totalSeconds / 60
         val seconds = totalSeconds % 60
         return if (minutes > 0) "${minutes}分${seconds}秒" else "${seconds}秒"
     }
-
 }
 
-fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, password: String): String {
+fun createLoginModel(
+    json: Json,
+    style: LoginKeyStyle,
+    username: String,
+    password: String,
+): String {
     return json.encodeToString(JsonObject.serializer(), buildJsonObject {
         when (style) {
             LoginKeyStyle.CAMEL_CASE_V1 -> {
@@ -348,117 +337,115 @@ fun createLoginModel(json: Json, style: LoginKeyStyle, username: String, passwor
     })
 }
 
-fun createDefaultHttpClient(config: NetworkConfigProvider, json: Json): HttpClient {
+fun createDefaultHttpClient(
+    config: NetworkConfigProvider,
+    json: Json,
+    authRefreshLock: AuthRefreshLock = AuthRefreshLock(),
+): HttpClient {
     return HttpClient(OkHttp) {
         engine {
-            //duplexStreamingEnabled = true
             config {
                 protocols(listOf(okhttp3.Protocol.HTTP_1_1))
             }
         }
-        installPlugins(config, json)
+        installPlugins(config, json, authRefreshLock)
     }
 }
 
 fun createNoAuthDefaultHttpClient(json: Json): HttpClient {
-    return HttpClient(OkHttp){
+    return HttpClient(OkHttp) {
         engine {
-            //duplexStreamingEnabled = true
             config {
                 protocols(listOf(okhttp3.Protocol.HTTP_1_1))
             }
         }
-        install(ContentNegotiation) {
-            json(json)
-        }
-        install(Logging) {
-            logger = Logger.ANDROID
-            level = LogLevel.ALL
-        }
+        installCommonPlugins(json)
     }
 }
 
-fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: NetworkConfigProvider, json: Json) {
-    // 插件1：内容协商，用于自动序列化/反序列化 @Serializable 类
+private fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installCommonPlugins(
+    json: Json,
+) {
     install(ContentNegotiation) {
         json(json)
     }
-   /* install(io.ktor.client.plugins.compression.ContentEncoding) {
-        gzip()
-    }*/
-    // 插件2: 拦截相应根据code401修改状态码
+    install(Logging) {
+        logger = Logger.ANDROID
+        level = LogLevel.ALL
+    }
+}
+
+@OptIn(InternalAPI::class)
+fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(
+    config: NetworkConfigProvider,
+    json: Json,
+    authRefreshLock: AuthRefreshLock = AuthRefreshLock(),
+) {
+    installCommonPlugins(json)
+
     install(CustomAuthTriggerPlugin) {
         this.json = json
     }
 
-    // 插件3：超时设置
     install(HttpTimeout) {
-        requestTimeoutMillis = 300000
-        connectTimeoutMillis = 300000
-        socketTimeoutMillis = 300000
+        requestTimeoutMillis = config.requestTimeoutMillis
+        connectTimeoutMillis = config.connectTimeoutMillis
+        socketTimeoutMillis = config.socketTimeoutMillis
     }
 
-    // 插件4：认证，自动处理 Bearer Token
     install(Auth) {
         bearer {
-            // 设置 realm，这对于 Auth 插件正确识别和响应 401 挑战是必要的
             realm = "Access to protected resources"
-            
-            // 关键：每次请求前动态加载 token，而不是使用缓存
-            // 这里使用 lambda 确保每次都读取最新的 config.token 值
+
             loadTokens {
-                // 此块只在需要时被调用，且结果会被缓存
-                // 但我们后面会让 refreshTokens 来处理 token 更新
                 val token = config.token
                 if (token.isNotEmpty()) {
-                    println("Ktor Auth: loadTokens 返回现有 token")
+                    Log.d(TAG, "loadTokens: 使用现有 token")
                     BearerTokens(accessToken = token, refreshToken = null)
                 } else {
-                    println("Ktor Auth: loadTokens 返回 null (无已保存的 token)")
+                    Log.d(TAG, "loadTokens: 无已保存的 token")
                     null
                 }
             }
-            
-            // 只对非登录请求发送 Authorization 头
-            // 当 token 为空时也发送请求（让服务器返回 401 来触发 refreshTokens）
+
             sendWithoutRequest { request ->
                 val isLoginPath = request.url.encodedPath == config.loginPath
                 val hasToken = config.token.isNotEmpty()
-                // 对登录请求不发送 token，对其他请求：有 token 时才发送
                 !isLoginPath && hasToken
             }
 
             refreshTokens {
-                // 使用全局锁来确保只有一个刷新操作在执行
-                AuthRefreshLock.mutex.withLock {
-                    // `oldTokens` 是导致本次请求失败的旧 Token（首次登录后可能为 null）
+                authRefreshLock.mutex.withLock {
                     val oldTokens = this.oldTokens
-                    // `currentSavedToken` 是我们共享配置中当前存储的 Token
                     val currentSavedToken = config.token
-                    
-                    // 调试日志
-                    val oldTokenPreview = oldTokens?.accessToken?.let { 
-                        if (it.length > 16) "${it.take(6)}...${it.takeLast(6)}" else it 
+
+                    val oldTokenPreview = oldTokens?.accessToken?.let {
+                        if (it.length > 16) "${it.take(6)}...${it.takeLast(6)}" else it
                     } ?: "null"
-                    val savedTokenPreview = if (currentSavedToken.length > 16) 
-                        "${currentSavedToken.take(6)}...${currentSavedToken.takeLast(6)}" 
-                    else currentSavedToken.ifEmpty { "empty" }
-                    println("Ktor Auth: refreshTokens - oldToken: $oldTokenPreview, savedToken: $savedTokenPreview, 相同: ${oldTokens?.accessToken == currentSavedToken}")
+                    val savedTokenPreview = if (currentSavedToken.length > 16)
+                        "${currentSavedToken.take(6)}...${currentSavedToken.takeLast(6)}"
+                    else
+                        currentSavedToken.ifEmpty { "empty" }
+                    Log.d(
+                        TAG,
+                        "refreshTokens - oldToken: $oldTokenPreview, savedToken: $savedTokenPreview, 相同: ${oldTokens?.accessToken == currentSavedToken}"
+                    )
 
-                    // 关键检查：在我们等待锁的过程中，Token 是否已经被其他请求刷新了？
-                    // 检查条件：
-                    // 1. currentSavedToken 必须非空（有有效的 token）
-                    // 2. currentSavedToken 和导致失败的旧 Token 不一样
-                    // 满足这两个条件说明 token 已被更新（可能是外部登录或其他请求刷新的）
                     if (currentSavedToken.isNotEmpty() && oldTokens?.accessToken != currentSavedToken) {
-                        println("Ktor Auth: Token 已被更新（外部登录或并发刷新），直接使用新 Token。")
-                        BearerTokens(accessToken = currentSavedToken, refreshToken = null)
+                        Log.d(TAG, "Token 已被更新，直接使用新 Token")
+                        BearerTokens(
+                            accessToken = currentSavedToken,
+                            refreshToken = null
+                        )
                     } else {
-                        // 如果 Token 还是旧的，说明我们是第一个拿到锁并需要执行刷新的请求。
-                        println("Ktor Auth: Token 已过期，开始执行刷新操作...")
-                        val loginPayload = createLoginModel(json, config.getLoginKeyStyle(), config.username, config.password)
+                        Log.d(TAG, "Token 已过期，开始执行刷新操作...")
+                        val loginPayload = createLoginModel(
+                            json,
+                            config.getLoginKeyStyle(),
+                            config.username,
+                            config.password
+                        )
 
-                        // 执行实际的登录（刷新）请求
                         val response = client.post(config.loginPath) {
                             markAsRefreshTokenRequest()
                             setBody(loginPayload)
@@ -469,18 +456,11 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
                         if (loginResult.isSuccess() && loginResult.data != null) {
                             val newToken = loginResult.data.token
                             val newTenant = loginResult.data.tenant
-                            // 更新本地存储的 Token
                             config.onNewTokenReceived(newToken, newTenant)
-                            // 记录部分 token 用于调试（只显示前后几个字符）
-                            val tokenPreview = if (newToken.length > 20) 
-                                "${newToken.take(8)}...${newToken.takeLast(8)}" 
-                            else newToken
-                            println("Ktor Auth: Token 刷新成功，新 token: $tokenPreview")
-                            // 返回新的 BearerTokens，Auth 插件会用它来重试
+                            Log.d(TAG, "Token 刷新成功")
                             BearerTokens(accessToken = newToken, refreshToken = null)
                         } else {
-                            // 如果重登录失败，则返回 null，原始请求将最终失败
-                            println("Ktor Auth: 重新登录失败。")
+                            Log.e(TAG, "重新登录失败")
                             null
                         }
                     }
@@ -489,10 +469,11 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
         }
     }
 
-    // 插件5：默认请求配置
     install(DefaultRequest) {
-        val host = config.serverAddress.removePrefix("https://").removePrefix("http://")
-        val protocol = if (config.serverAddress.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
+        val host =
+            config.serverAddress.removePrefix("https://").removePrefix("http://")
+        val protocol =
+            if (config.serverAddress.startsWith("https")) URLProtocol.HTTPS else URLProtocol.HTTP
         val port = config.serverPort.toIntOrNull()
 
         url {
@@ -506,10 +487,6 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
             header("tenant", tenant)
         }
     }
-
-    // 插件6：日志
-    install(Logging) {
-        logger = Logger.ANDROID
-        level = LogLevel.ALL
-    }
 }
+
+private const val TAG = "HttpUtil-Ktor"
