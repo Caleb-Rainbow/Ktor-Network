@@ -71,6 +71,33 @@ import java.io.File
  * @author 杨帅林
  * @create 2024/10/18 14:09
  **/
+private val MIME_TYPES = mapOf(
+    "png" to "image/png",
+    "jpg" to "image/jpeg",
+    "jpeg" to "image/jpeg",
+    "gif" to "image/gif",
+    "webp" to "image/webp",
+    "bmp" to "image/bmp",
+    "svg" to "image/svg+xml",
+    "pdf" to "application/pdf",
+    "doc" to "application/msword",
+    "docx" to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls" to "application/vnd.ms-excel",
+    "xlsx" to "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "mp4" to "video/mp4",
+    "avi" to "video/x-msvideo",
+    "mp3" to "audio/mpeg",
+    "wav" to "audio/wav",
+    "txt" to "text/plain",
+    "json" to "application/json",
+    "zip" to "application/zip",
+)
+
+private fun File.contentType(): String {
+    val ext = extension.lowercase()
+    return MIME_TYPES[ext] ?: "application/octet-stream"
+}
+
 class HttpUtil(
     val httpClient: HttpClient,
     val json: Json,
@@ -205,7 +232,7 @@ class HttpUtil(
             val response = httpClient.submitFormWithBinaryData(
                 url = "$urlPath?bucketName=$bucketName", formData = formData {
                     append("file", file.readBytes(), Headers.build {
-                        append(HttpHeaders.ContentType, "image/png")
+                        append(HttpHeaders.ContentType, file.contentType())
                         append(HttpHeaders.ContentDisposition, "filename=${file.name}")
                     })
                 }) {
@@ -439,9 +466,9 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
                         }
 
                         val loginResult = response.body<ResultModel<UserToken>>()
-                        if (loginResult.isSuccess() && loginResult.token != null) {
-                            val newToken = loginResult.token.token
-                            val newTenant = loginResult.token.tenant
+                        if (loginResult.isSuccess() && loginResult.data != null) {
+                            val newToken = loginResult.data.token
+                            val newTenant = loginResult.data.tenant
                             // 更新本地存储的 Token
                             config.onNewTokenReceived(newToken, newTenant)
                             // 记录部分 token 用于调试（只显示前后几个字符）
@@ -483,6 +510,6 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(config: Netw
     // 插件6：日志
     install(Logging) {
         logger = Logger.ANDROID
-        level = LogLevel.NONE
+        level = LogLevel.ALL
     }
 }
