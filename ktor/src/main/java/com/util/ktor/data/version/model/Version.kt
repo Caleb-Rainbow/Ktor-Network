@@ -10,15 +10,15 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class Version(
     /**app名称*/
-    val appName:String,
+    val appName: String,
     /**版本号*/
-    val code:Int,
+    val code: Int,
     /**版本名称*/
-    val name:String,
+    val name: String,
     /**下载链接*/
-    val url:String,
+    val url: String,
     /**文件大小*/
-    val size:String?,
+    val size: String?,
     /**更新描述*/
-    val description:String
+    val description: String
 )

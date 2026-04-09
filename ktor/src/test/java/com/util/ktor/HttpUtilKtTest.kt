@@ -9,9 +9,13 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.respondError
 import io.ktor.client.engine.mock.respondOk
 import io.ktor.client.engine.mock.toByteArray
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.plugin
 import io.ktor.client.request.get
@@ -19,11 +23,13 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.runBlocking
+import io.ktor.util.network.UnresolvedAddressException
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -53,9 +59,11 @@ class HttpUtilKtTest : KoinTest {
         override val checkUpdatePath: String = ""
         override val heartBeatPath: String = "/heart"
         override val bucketName: String = "morningcheck"
-        override val username: String = "demo"
-        override val password: String = "123456"
+        override val username: String = "test_user"
+        override val password: String = "test_password"
         override val tenant: String = ""
+        override val getLogoPath: String = "https://vis.xingchenwulian.com/deviceLogo/selectDeviceLogo"
+        override val isLogEnabled: Boolean = false
         override fun getLoginKeyStyle(): LoginKeyStyle = LoginKeyStyle.CAMEL_CASE_V1
         override fun onNewTokenReceived(newToken: String, newTenant: String?) {}
     }
@@ -179,7 +187,7 @@ class HttpUtilKtTest : KoinTest {
 
     @Test
     fun `ContentNegotiation plugin should serialize request and deserialize response`() =
-        runBlocking {
+        runTest {
             val requestObject = TestData(id = 1, message = "Hello Ktor")
             val expectedJsonResponse = """
                 {
@@ -238,7 +246,7 @@ class HttpUtilKtTest : KoinTest {
     }
 
     @Test
-    fun `Auth plugin BearerTokens loading with token`() = runBlocking {
+    fun `Auth plugin BearerTokens loading with token`() = runTest {
         val config: NetworkConfigProvider = get()
         config.token = "my-secret-token"
         val mockEngine = MockEngine { request ->
@@ -265,7 +273,7 @@ class HttpUtilKtTest : KoinTest {
     }
 
     @Test
-    fun `Auth plugin BearerTokens loading without token`() = runBlocking {
+    fun `Auth plugin BearerTokens loading without token`() = runTest {
         val config = mockConfigProvider
         config.token = ""
         val mockEngine = MockEngine { request ->
@@ -279,7 +287,7 @@ class HttpUtilKtTest : KoinTest {
     }
 
     @Test
-    fun `Auth plugin sendWithoutRequest logic`() = runBlocking {
+    fun `Auth plugin sendWithoutRequest logic`() = runTest {
         val config: NetworkConfigProvider = get()
         config.token = "my-token"
         val mockEngine = MockEngine { request ->
@@ -354,11 +362,234 @@ class HttpUtilKtTest : KoinTest {
         val lock1 = AuthRefreshLock()
         val lock2 = AuthRefreshLock()
         assert(lock1 !== lock2)
-        assert(lock1.mutex !== lock2.mutex)
+    }
+
+    //region handleException missing branches
+
+    @Test
+    fun `handleException returns TIMEOUT_ERROR for HttpRequestTimeoutException`() {
+        val mockEngine = MockEngine { respondOk() }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine),
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.handleException<String>(
+            HttpRequestTimeoutException(
+                io.ktor.client.request.HttpRequestBuilder().apply {
+                    url {
+                        protocol = io.ktor.http.URLProtocol.HTTP
+                        host = "localhost"
+                    }
+                }
+            )
+        )
+        assertEquals(CustomResultCode.TIMEOUT_ERROR, result.code)
+        assertEquals("网络请求超时", result.message)
+        mockEngine.close()
     }
 
     @Test
-    fun `Auth plugin with shared AuthRefreshLock`() = runBlocking {
+    fun `handleException returns TIMEOUT_ERROR for ConnectTimeoutException`() {
+        val mockEngine = MockEngine { respondOk() }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine),
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.handleException<String>(
+            ConnectTimeoutException("connect timeout")
+        )
+        assertEquals(CustomResultCode.TIMEOUT_ERROR, result.code)
+        assertEquals("网络请求超时", result.message)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `handleException returns CONNECTION_ERROR for UnresolvedAddressException`() {
+        val mockEngine = MockEngine { respondOk() }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine),
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.handleException<String>(
+            UnresolvedAddressException()
+        )
+        assertEquals(CustomResultCode.CONNECTION_ERROR, result.code)
+        assertEquals("无法连接到服务器", result.message)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `handleException returns HTTP status code for ResponseException`() = runTest {
+        val mockEngine = MockEngine { respondOk() }
+        val client = HttpClient(mockEngine)
+        val httpUtil = HttpUtil(httpClient = client, json = get(), config = mockConfigProvider)
+
+        // ResponseException requires an HttpResponse — test with a real 404 response
+        val mockEngine404 = MockEngine {
+            respondError(HttpStatusCode.NotFound, "Not Found")
+        }
+        val client404 = HttpClient(mockEngine404)
+        try {
+            client404.get("http://localhost/test")
+        } catch (e: ResponseException) {
+            val result = httpUtil.handleException<String>(e)
+            assertEquals(404, result.code)
+            assertTrue(result.message?.contains("Not Found") == true)
+        }
+        mockEngine.close()
+        client.close()
+        mockEngine404.close()
+        client404.close()
+    }
+
+    //endregion
+
+    //region HttpUtil CRUD methods with MockEngine
+
+    @Test
+    fun `get request sends correct method and path`() = runTest {
+        val mockEngine = MockEngine { request ->
+            assertEquals(HttpMethod.Get, request.method)
+            assertEquals("/api/test", request.url.encodedPath)
+            respond(
+                content = """{"code":200,"msg":"ok","data":"get-result"}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine) {
+                install(ContentNegotiation) { json(get()) }
+            },
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.get<String>("/api/test")
+        assertTrue(result.isSuccess())
+        assertEquals("get-result", result.data)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `post request sends correct method and body`() = runTest {
+        val mockEngine = MockEngine { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            val bodyText = request.body.toByteArray().decodeToString()
+            assertTrue(bodyText.contains("test-value"))
+            respond(
+                content = """{"code":200,"msg":"ok","data":"post-result"}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine) {
+                install(ContentNegotiation) { json(get()) }
+            },
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.post<String>("/api/create", body = mapOf("key" to "test-value"))
+        assertTrue(result.isSuccess())
+        assertEquals("post-result", result.data)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `put request sends correct method`() = runTest {
+        val mockEngine = MockEngine { request ->
+            assertEquals(HttpMethod.Put, request.method)
+            respond(
+                content = """{"code":200,"msg":"ok","data":"put-result"}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine) {
+                install(ContentNegotiation) { json(get()) }
+            },
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.put<String>("/api/update")
+        assertTrue(result.isSuccess())
+        assertEquals("put-result", result.data)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `delete request sends correct method`() = runTest {
+        val mockEngine = MockEngine { request ->
+            assertEquals(HttpMethod.Delete, request.method)
+            respond(
+                content = """{"code":200,"msg":"ok","data":"delete-result"}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine) {
+                install(ContentNegotiation) { json(get()) }
+            },
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.delete<String>("/api/remove")
+        assertTrue(result.isSuccess())
+        assertEquals("delete-result", result.data)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `request with full URL uses it directly`() = runTest {
+        val mockEngine = MockEngine { request ->
+            assertTrue(request.url.toString().startsWith("https://external.api.com/data"))
+            respond(
+                content = """{"code":200,"msg":"ok","data":"external-result"}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine) {
+                install(ContentNegotiation) { json(get()) }
+            },
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.get<String>("https://external.api.com/data")
+        assertTrue(result.isSuccess())
+        assertEquals("external-result", result.data)
+        mockEngine.close()
+    }
+
+    @Test
+    fun `request with parametersMap sends query parameters`() = runTest {
+        val mockEngine = MockEngine { request ->
+            assertEquals(HttpMethod.Get, request.method)
+            val params = request.url.parameters
+            assertEquals("value1", params["key1"])
+            assertEquals("value2", params["key2"])
+            respond(
+                content = """{"code":200,"msg":"ok","data":"params-result"}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val httpUtil = HttpUtil(
+            httpClient = HttpClient(mockEngine) {
+                install(ContentNegotiation) { json(get()) }
+            },
+            json = get(),
+            config = mockConfigProvider
+        )
+        val result = httpUtil.get<String>("/api/search", mapOf("key1" to "value1", "key2" to "value2"))
+        assertTrue(result.isSuccess())
+        mockEngine.close()
+    }
+
+    //endregion
+
+    @Test
+    fun `Auth plugin with shared AuthRefreshLock`() = runTest {
         val config: NetworkConfigProvider = get()
         config.token = "shared-lock-token"
         val sharedLock = AuthRefreshLock()

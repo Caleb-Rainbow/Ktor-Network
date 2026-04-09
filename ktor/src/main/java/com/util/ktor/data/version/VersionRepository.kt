@@ -10,8 +10,8 @@ import com.util.ktor.model.ResultModel
  * @author 杨帅林
  * @create 2024/11/23 10:56
  **/
-class VersionRepository(private val httpUtil: HttpUtil,private val config: NetworkConfigProvider) {
-    suspend fun checkUpdate():ResultModel<Version> = httpUtil.get(path = config.checkUpdatePath)
+class VersionRepository(private val httpUtil: HttpUtil, private val config: NetworkConfigProvider) {
+    suspend fun checkUpdate(): ResultModel<Version> = httpUtil.get(path = config.checkUpdatePath)
     /**
      * 下载文件
      * @param path 文件的 URL。
