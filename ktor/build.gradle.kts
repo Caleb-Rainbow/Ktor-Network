@@ -1,11 +1,9 @@
 import com.android.build.api.dsl.LibraryExtension
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("maven-publish")
     id("com.android.library")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("org.jetbrains.kotlin.android")
 }
 
 extensions.configure<LibraryExtension>("android") {
@@ -43,19 +41,12 @@ extensions.configure<LibraryExtension>("android") {
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
-    }
-}
-
-
 publishing {
     publications {
         create<MavenPublication>("release") {
             groupId = "com.github.Caleb-Rainbow"
             artifactId = "Ktor-Network"
-            version = "2026.04.09.01"
+            version = "2026.04.15.01"
 
             afterEvaluate {
                 from(components["release"])

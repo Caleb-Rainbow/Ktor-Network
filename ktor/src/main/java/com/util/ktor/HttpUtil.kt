@@ -59,7 +59,10 @@ class HttpUtil(
         block: HttpRequestBuilder.() -> Unit,
     ): ResultModel<T> {
         try {
-            val response = httpClient.request { block() }
+            val response = httpClient.request {
+            block()
+            headers.append("X-Requested-With", "XMLHttpRequest")
+        }
             val result = response.bodyAsChannel().toInputStream().use { stream ->
                 json.decodeFromStream(serializer, stream)
             }
@@ -187,6 +190,7 @@ class HttpUtil(
                     requestTimeoutMillis = timeoutMillis
                 }
                 headers.append(HttpHeaders.Connection, "close")
+                headers.append("X-Requested-With", "XMLHttpRequest")
             }.bodyAsText()
 
             if (config.isLogEnabled) Log.d(TAG, "uploadFile path: $urlPath")
@@ -227,6 +231,7 @@ class HttpUtil(
                         timeout {
                             requestTimeoutMillis = timeoutMillis
                         }
+                        headers.append("X-Requested-With", "XMLHttpRequest")
                     }.execute { httpResponse ->
                         val totalBytes = httpResponse.contentLength() ?: 0L
                         var bytesRead = 0L

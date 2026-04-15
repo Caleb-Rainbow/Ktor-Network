@@ -17,6 +17,7 @@ import io.ktor.client.plugins.auth.Auth
 import io.ktor.client.plugins.auth.providers.BearerTokens
 import io.ktor.client.plugins.auth.providers.bearer
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.logging.ANDROID
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logger
 import io.ktor.client.plugins.logging.Logging
@@ -72,11 +73,7 @@ internal fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installCommonPlugi
     }
     if (logLevel != LogLevel.NONE) {
         install(Logging) {
-            logger = object : Logger {
-                override fun log(message: String) {
-                    Log.d(TAG, message)
-                }
-            }
+            logger = Logger.ANDROID
             level = logLevel
         }
     }
