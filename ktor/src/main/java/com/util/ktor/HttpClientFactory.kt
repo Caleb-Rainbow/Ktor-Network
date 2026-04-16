@@ -32,6 +32,10 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.InternalAPI
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 
 private const val TAG = "HttpClientFactory"
 
@@ -167,16 +171,27 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(
                                 contentType(ContentType.Application.Json)
                             }
 
-                            val loginResult = response.body<ResultModel<UserToken>>()
-                            if (loginResult.isSuccess() && loginResult.data != null) {
-                                val newToken = loginResult.data.token
-                                val newTenant = loginResult.data.tenant
-                                config.onNewTokenReceived(newToken, newTenant)
-                                if (config.isLogEnabled) Log.d(TAG, "Token 刷新成功")
-                                BearerTokens(accessToken = newToken, refreshToken = null)
+                            val rawResult = response.body<ResultModel<JsonElement>>()
+                            if (rawResult.isSuccess()) {
+                                val userToken = when (val dataElement = rawResult.data) {
+                                    is JsonPrimitive -> {
+                                        if (dataElement.isString) UserToken(token = dataElement.content) else null
+                                    }
+                                    is JsonObject -> json.decodeFromJsonElement<UserToken>(dataElement)
+                                    else -> null
+                                }
+                                if (userToken != null) {
+                                    config.onNewTokenReceived(userToken.token, userToken.tenant)
+                                    if (config.isLogEnabled) Log.d(TAG, "Token 刷新成功")
+                                    BearerTokens(accessToken = userToken.token, refreshToken = null)
+                                } else {
+                                    Log.e(TAG, "重新登录失败: 无法解析 token")
+                                    config.onTokenRefreshFailed(ResultModel(code = rawResult.code, message = rawResult.message))
+                                    null
+                                }
                             } else {
-                                Log.e(TAG, "重新登录失败: code=${loginResult.code}, msg=${loginResult.message}")
-                                config.onTokenRefreshFailed(loginResult)
+                                Log.e(TAG, "重新登录失败: code=${rawResult.code}, msg=${rawResult.message}")
+                                config.onTokenRefreshFailed(ResultModel(code = rawResult.code, message = rawResult.message))
                                 null
                             }
                         }

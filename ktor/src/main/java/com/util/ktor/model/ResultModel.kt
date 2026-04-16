@@ -1,5 +1,6 @@
 package com.util.ktor.model
 
+import com.util.ktor.data.login.model.UserToken
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -11,7 +12,8 @@ data class ResultModel<T>(
     val data: T? = null,
     val rows: List<T>? = null,
     val total: Int? = null,
-    val url: String? = null
+    val url: String? = null,
+    val token: UserToken? = null,
 ) {
     companion object {
         fun <T> error(message: String = "未知错误") =
