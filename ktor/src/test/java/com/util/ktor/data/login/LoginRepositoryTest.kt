@@ -19,6 +19,8 @@ import org.junit.Before
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class LoginRepositoryTest {
 
@@ -54,11 +56,90 @@ class LoginRepositoryTest {
         return LoginRepository(httpUtil, json, config)
     }
 
-    // Note: LoginRepository.passwordLogin calls HttpUtil.post which uses
-    // android.util.Log for error handling. Tests verify request construction.
+    //region 四种响应格式测试
 
     @Test
-    fun `passwordLogin with CAMEL_CASE_V1 sends correct body keys`() = runTest {
+    fun `格式A - data 是 UserToken 对象`() = runTest {
+        val engine = MockEngine { request ->
+            respond(
+                content = """{"code":200,"msg":"操作成功","data":{"token":"jwt-token-123","officeId":42,"tenant":"prod"}}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val repo = createLoginRepo(engine)
+        val result = repo.passwordLogin(username = "admin", password = "123456")
+
+        assertTrue(result.isSuccess())
+        val token = result.data!!
+        assertEquals("jwt-token-123", token.token)
+        assertEquals(42, token.officeId)
+        assertEquals("prod", token.tenant)
+    }
+
+    @Test
+    fun `格式B - data 是纯字符串 token`() = runTest {
+        val engine = MockEngine { request ->
+            respond(
+                content = """{"code":200,"msg":"操作成功","data":"eyJhbGciOiJIUzI1NiJ9"}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val repo = createLoginRepo(engine)
+        val result = repo.passwordLogin(username = "admin", password = "123456")
+
+        assertTrue(result.isSuccess())
+        val token = result.data!!
+        assertEquals("eyJhbGciOiJIUzI1NiJ9", token.token)
+        assertNull(token.officeId)
+        assertNull(token.tenant)
+    }
+
+    @Test
+    fun `格式C - 顶层 token 是对象`() = runTest {
+        val engine = MockEngine { request ->
+            respond(
+                content = """{"msg":"操作成功","code":200,"deptId":2,"tenant":"dev","token":{"tenant":"dev","userId":381,"deptId":2,"token":"eyJhbG"}}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val repo = createLoginRepo(engine)
+        val result = repo.passwordLogin(username = "admin", password = "123456")
+
+        assertTrue(result.isSuccess())
+        val token = result.data!!
+        assertEquals("eyJhbG", token.token)
+        assertEquals(2, token.officeId)
+        assertEquals("dev", token.tenant)
+    }
+
+    @Test
+    fun `格式D - 顶层 token 是纯字符串`() = runTest {
+        val engine = MockEngine { request ->
+            respond(
+                content = """{"msg":"操作成功","code":200,"deptId":2,"tenant":"dev","token":"eyJhbG"}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val repo = createLoginRepo(engine)
+        val result = repo.passwordLogin(username = "admin", password = "123456")
+
+        assertTrue(result.isSuccess())
+        val token = result.data!!
+        assertEquals("eyJhbG", token.token)
+        assertNull(token.officeId)
+        assertNull(token.tenant)
+    }
+
+    //endregion
+
+    //region 请求格式适配
+
+    @Test
+    fun `CAMEL_CASE_V1 发送正确的请求体 key`() = runTest {
         val engine = MockEngine { request ->
             val body = request.body.toByteArray().decodeToString()
             assert(body.contains("userName"))
@@ -75,7 +156,7 @@ class LoginRepositoryTest {
     }
 
     @Test
-    fun `passwordLogin with LOWER_CASE_V2 sends correct body keys`() = runTest {
+    fun `LOWER_CASE_V2 发送正确的请求体 key`() = runTest {
         val v2Config = object : NetworkConfigProvider by config {
             override fun getLoginKeyStyle(): LoginKeyStyle = LoginKeyStyle.LOWER_CASE_V2
         }
@@ -97,7 +178,7 @@ class LoginRepositoryTest {
     }
 
     @Test
-    fun `passwordLogin with custom host`() = runTest {
+    fun `自定义 host 拼接到请求路径`() = runTest {
         val engine = MockEngine { request ->
             assert(request.url.toString().contains("custom-host"))
             respond(
@@ -111,29 +192,51 @@ class LoginRepositoryTest {
         assertNotNull(result)
     }
 
+    //endregion
+
+    //region 错误场景
+
     @Test
-    fun `passwordLogin with special characters in credentials`() = runTest {
+    fun `登录失败时返回错误码和消息`() = runTest {
         val engine = MockEngine { request ->
-            val body = request.body.toByteArray().decodeToString()
-            assert(body.isNotEmpty())
             respond(
-                content = """{"code":200,"msg":"ok","data":{"token":"special-token"}}""",
+                content = """{"code":401,"msg":"用户名或密码错误"}""",
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, "application/json")
             )
         }
         val repo = createLoginRepo(engine)
-        val result = repo.passwordLogin(
-            username = "user@domain.com",
-            password = "p@ss!w0rd#$%"
-        )
-        assertNotNull(result)
+        val result = repo.passwordLogin(username = "admin", password = "wrong")
+
+        assertTrue(result.isError())
+        assertEquals(401, result.code)
+        assertEquals("用户名或密码错误", result.message)
+        assertNull(result.data)
     }
 
-    //region UserToken model tests (pure serialization, no android.util.Log)
+    @Test
+    fun `格式C 登录失败时返回错误码和消息`() = runTest {
+        val engine = MockEngine { request ->
+            respond(
+                content = """{"code":500,"msg":"服务器错误","token":null}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val repo = createLoginRepo(engine)
+        val result = repo.passwordLogin(username = "admin", password = "123456")
+
+        assertTrue(result.isError())
+        assertEquals(500, result.code)
+        assertNull(result.data)
+    }
+
+    //endregion
+
+    //region UserToken 序列化测试
 
     @Test
-    fun `UserToken with all fields`() {
+    fun `UserToken 所有字段反序列化`() {
         val jsonStr = """{
             "token":"abc123",
             "officeId":42,
@@ -150,25 +253,25 @@ class LoginRepositoryTest {
     }
 
     @Test
-    fun `UserToken with deptId alias maps to officeId`() {
+    fun `UserToken deptId 别名映射到 officeId`() {
         val jsonStr = """{"token":"t","deptId":99}"""
         val token = json.decodeFromString(UserToken.serializer(), jsonStr)
         assertEquals(99, token.officeId)
     }
 
     @Test
-    fun `UserToken with only token`() {
+    fun `UserToken 仅 token 字段`() {
         val jsonStr = """{"token":"minimal"}"""
         val token = json.decodeFromString(UserToken.serializer(), jsonStr)
         assertEquals("minimal", token.token)
-        assertEquals(null, token.officeId)
-        assertEquals(null, token.tenant)
-        assertEquals(null, token.forceChangePassword)
-        assertEquals(null, token.forceChangeReason)
+        assertNull(token.officeId)
+        assertNull(token.tenant)
+        assertNull(token.forceChangePassword)
+        assertNull(token.forceChangeReason)
     }
 
     @Test
-    fun `UserToken round trip serialization`() {
+    fun `UserToken 往返序列化`() {
         val original = UserToken(
             token = "round-trip-token",
             officeId = 42,

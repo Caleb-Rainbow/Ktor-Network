@@ -46,7 +46,7 @@ class VersionRepositoryTest {
             install(ContentNegotiation) { json(json) }
         }
         val httpUtil = HttpUtil(httpClient = client, json = json, config = config)
-        return VersionRepository(httpUtil, config)
+        return VersionRepository(httpUtil, client, config)
     }
 
     //region Version model serialization tests (pure, no android.util.Log dependency)

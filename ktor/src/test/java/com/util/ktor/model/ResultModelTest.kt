@@ -2,7 +2,7 @@ package com.util.ktor.model
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.serializer
-import kotlin.test.Test
+import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull

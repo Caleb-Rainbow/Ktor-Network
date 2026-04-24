@@ -60,9 +60,9 @@ class HttpUtil(
     ): ResultModel<T> {
         try {
             val response = httpClient.request {
-            block()
-            headers.append("X-Requested-With", "XMLHttpRequest")
-        }
+                block()
+                headers.append("X-Requested-With", "XMLHttpRequest")
+            }
             val result = response.bodyAsChannel().toInputStream().use { stream ->
                 json.decodeFromStream(serializer, stream)
             }
@@ -72,6 +72,19 @@ class HttpUtil(
         } catch (e: Exception) {
             return handleException(e)
         }
+    }
+
+    /**
+     * 执行 HTTP 请求并返回原始响应体字符串，适用于需要自行解析响应的场景。
+     */
+    suspend fun executeRawRequest(
+        block: HttpRequestBuilder.() -> Unit,
+    ): String {
+        val response = httpClient.request {
+            block()
+            headers.append("X-Requested-With", "XMLHttpRequest")
+        }
+        return response.bodyAsText()
     }
 
     suspend inline fun <reified T> request(

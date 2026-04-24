@@ -1,8 +1,8 @@
 package com.util.ktor.serializer
 
 import kotlinx.serialization.json.Json
+import org.junit.Test
 import java.math.BigDecimal
-import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 

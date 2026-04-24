@@ -1,7 +1,7 @@
 package com.util.ktor.data.login.model
 
 import kotlinx.serialization.json.Json
-import kotlin.test.Test
+import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
