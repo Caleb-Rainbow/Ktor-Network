@@ -68,6 +68,28 @@ fun createNoAuthDefaultHttpClient(
     }
 }
 
+/**
+ * 创建专用于文件下载的 HttpClient。
+ * 不启用 Logging 插件（避免大文件下载时因响应体日志缓冲导致 OOM），
+ * 仅安装超时配置。
+ */
+fun createDownloadHttpClient(
+    config: NetworkConfigProvider,
+): HttpClient {
+    return HttpClient(OkHttp) {
+        engine {
+            config {
+                protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            }
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = config.requestTimeoutMillis
+            connectTimeoutMillis = config.connectTimeoutMillis
+            socketTimeoutMillis = config.socketTimeoutMillis
+        }
+    }
+}
+
 internal fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installCommonPlugins(
     json: Json,
     logLevel: LogLevel = LogLevel.NONE,
@@ -173,7 +195,7 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(
 
                             val rawResult = response.body<ResultModel<JsonElement>>()
                             if (rawResult.isSuccess()) {
-                                val userToken = when (val dataElement = rawResult.data) {
+                                val userToken = rawResult.token ?: when (val dataElement = rawResult.data) {
                                     is JsonPrimitive -> {
                                         if (dataElement.isString) UserToken(token = dataElement.content) else null
                                     }

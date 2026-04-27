@@ -51,6 +51,7 @@ class HttpUtil(
     val httpClient: HttpClient,
     val json: Json,
     val config: NetworkConfigProvider,
+    private val downloadHttpClient: HttpClient? = null,
 ) {
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -240,7 +241,7 @@ class HttpUtil(
             val fileExistedBefore = file.exists()
             file.outputStream().use { outputStream ->
                 try {
-                    httpClient.prepareGet(path) {
+                    (downloadHttpClient ?: httpClient).prepareGet(path) {
                         timeout {
                             requestTimeoutMillis = timeoutMillis
                         }
