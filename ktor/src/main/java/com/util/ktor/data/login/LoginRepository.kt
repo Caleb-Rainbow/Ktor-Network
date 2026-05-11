@@ -38,6 +38,7 @@ class LoginRepository(
         host: String = "",
         username: String,
         password: String,
+        deviceNumber: String,
     ): ResultModel<UserToken> {
         val path = host + config.loginPath
 
@@ -55,7 +56,8 @@ class LoginRepository(
                         json = json,
                         style = config.getLoginKeyStyle(),
                         username = username,
-                        password = password
+                        password = password,
+                        deviceNumber = deviceNumber
                     )
                 )
             }

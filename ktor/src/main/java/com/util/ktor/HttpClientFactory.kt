@@ -184,7 +184,8 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installPlugins(
                                 json,
                                 config.getLoginKeyStyle(),
                                 config.username,
-                                config.password
+                                config.password,
+                                config.deviceNumber
                             )
 
                             val response = client.post(config.loginPath) {

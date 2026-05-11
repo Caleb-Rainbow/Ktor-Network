@@ -34,6 +34,8 @@ interface NetworkConfigProvider {
      * 以减少凭据在内存中的暴露时间。
      */
     val password: String
+    val deviceNumber: String
+        get() = ""
     val loginPath: String
     val uploadFilePath: String
     val checkUpdatePath: String

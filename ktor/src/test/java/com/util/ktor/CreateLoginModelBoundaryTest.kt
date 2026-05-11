@@ -163,11 +163,11 @@ class CreateLoginModelBoundaryTest {
     }
 
     @Test
-    fun `output contains exactly two fields`() {
+    fun `output contains exactly three fields`() {
         for (style in LoginKeyStyle.entries) {
             val result = createLoginModel(Json, style, "user", "pass")
             val obj = Json.parseToJsonElement(result).jsonObject
-            assertEquals(2, obj.size, "Should contain exactly 2 fields for $style")
+            assertEquals(3, obj.size, "Should contain exactly 3 fields for $style")
         }
     }
 

@@ -11,6 +11,7 @@ fun createLoginModel(
     style: LoginKeyStyle,
     username: String,
     password: String,
+    deviceNumber: String = "",
 ): String {
     return json.encodeToString(JsonObject.serializer(), buildJsonObject {
         when (style) {
@@ -24,5 +25,6 @@ fun createLoginModel(
                 put("password", password)
             }
         }
+        put("deviceNumber", deviceNumber)
     })
 }
